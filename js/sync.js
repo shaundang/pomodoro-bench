@@ -1,11 +1,11 @@
-// Optional multi-device sync via Firestore. Loaded as a module (deferred),
-// so it always runs after js/app.js has set up window.PomodoroBench.
+// Optional multi-device sync via Firebase Auth (Google sign-in) + Firestore.
+// Loaded as a module (deferred), so it always runs after js/app.js has set
+// up window.PomodoroBench.
 //
-// Model: one Firestore document per "sync code" at /syncs/{code}, holding
+// Model: one Firestore document per signed-in user at /syncs/{uid}, holding
 // the same {sessions, tasks, categories} shape as the local export/import
-// backup. Security rules make that collection world read/write — the sync
-// code itself is the only access control, like a shared password. Do not
-// reuse a code you'd consider secret for anything else.
+// backup. Security rules restrict each doc to only the matching
+// request.auth.uid (see firestore.rules) — no shared secret involved.
 //
 // Merge direction is additive-by-id both ways (same rule as file import):
 // pulling a remote snapshot never deletes local items, and push always
@@ -17,6 +17,9 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/fireba
 import {
   getFirestore, doc, getDoc, setDoc, onSnapshot, serverTimestamp
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+import {
+  getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged
+} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
 
 var firebaseConfig = {
   projectId: "pomodoro-bench",
@@ -28,44 +31,26 @@ var firebaseConfig = {
   measurementId: "G-4F7SYJ0JSM"
 };
 
-var STORAGE_SYNC_CODE = 'pomodoroBench.syncCode.v1';
 var POLL_MS = 4000; // how often to check local storage for unsynced changes
 var PUSH_DEBOUNCE_MS = 1500;
 
 var app = initializeApp(firebaseConfig);
 var db = getFirestore(app);
+var auth = getAuth(app);
+var googleProvider = new GoogleAuthProvider();
 
 var els = {
-  input: document.getElementById('syncCodeInput'),
-  connectBtn: document.getElementById('syncConnectBtn'),
-  status: document.getElementById('syncStatus'),
-  linkRow: document.getElementById('syncLinkRow'),
-  copyLinkBtn: document.getElementById('copySyncLinkBtn')
+  signInBtn: document.getElementById('syncSignInBtn'),
+  signOutBtn: document.getElementById('syncSignOutBtn'),
+  status: document.getElementById('syncStatus')
 };
 
-// Random, URL-safe code — good enough entropy that it doubles as the only
-// access control on the Firestore doc (see firestore.rules).
-function generateSyncCode(){
-  var bytes = new Uint8Array(15);
-  (window.crypto || window.msCrypto).getRandomValues(bytes);
-  return Array.prototype.map.call(bytes, function(b){ return b.toString(36); }).join('').slice(0, 20);
-}
-
-function syncLinkFor(code){
-  return location.origin + location.pathname + '?sync=' + encodeURIComponent(code);
-}
-
-function showSyncLink(code){
-  els.linkRow.hidden = false;
-  els.copyLinkBtn.dataset.link = syncLinkFor(code);
-}
-
-var unsubscribe = null;
+var unsubscribeSnapshot = null;
 var pollHandle = null;
 var pushTimeout = null;
 var lastPushedFingerprint = null;
 var applyingRemote = false; // guards against re-pushing what we just pulled
-var connectedCode = null;
+var currentUid = null;
 
 function setStatus(text){
   els.status.textContent = text;
@@ -80,18 +65,18 @@ function fingerprint(data){
 }
 
 function pushLocalSnapshot(){
-  if(!connectedCode || !window.PomodoroBench) return;
+  if(!currentUid || !window.PomodoroBench) return;
   var data = window.PomodoroBench.buildBackupData();
   var fp = fingerprint(data);
   if(fp === lastPushedFingerprint) return;
   lastPushedFingerprint = fp;
-  setDoc(doc(db, 'syncs', connectedCode), {
+  setDoc(doc(db, 'syncs', currentUid), {
     sessions: data.sessions,
     tasks: data.tasks,
     categories: data.categories,
     updatedAt: serverTimestamp()
   }).then(function(){
-    setStatus('Connected as "' + connectedCode + '" — synced ' + new Date().toLocaleTimeString());
+    setStatus('Signed in as ' + auth.currentUser.email + ' — synced ' + new Date().toLocaleTimeString());
   }).catch(function(err){
     setStatus('Sync error: ' + (err && err.message ? err.message : err));
   });
@@ -114,17 +99,12 @@ function stopPolling(){
   if(pollHandle){ clearInterval(pollHandle); pollHandle = null; }
 }
 
-function connect(code){
-  code = (code || '').trim();
-  if(!code){ code = generateSyncCode(); }
-  disconnect();
-  connectedCode = code;
-  els.input.value = code;
-  try{ localStorage.setItem(STORAGE_SYNC_CODE, code); }catch(e){}
-  showSyncLink(code);
+function startSyncingFor(uid){
+  stopSyncing();
+  currentUid = uid;
   setStatus('Connecting…');
 
-  var ref = doc(db, 'syncs', code);
+  var ref = doc(db, 'syncs', uid);
   getDoc(ref).then(function(snap){
     if(snap.exists()){
       applyingRemote = true;
@@ -135,7 +115,7 @@ function connect(code){
     // Push local (now possibly merged with remote) so both sides converge.
     pushLocalSnapshot();
 
-    unsubscribe = onSnapshot(ref, function(docSnap){
+    unsubscribeSnapshot = onSnapshot(ref, function(docSnap){
       if(!docSnap.exists()) return;
       applyingRemote = true;
       try{ window.PomodoroBench.applyIncomingBackup(docSnap.data()); }
@@ -144,68 +124,51 @@ function connect(code){
       // Reflect any newly-merged-in remote items back to the fingerprint
       // baseline so we don't immediately re-push a no-op change.
       lastPushedFingerprint = fingerprint(window.PomodoroBench.buildBackupData());
-      setStatus('Connected as "' + code + '" — last update ' + new Date().toLocaleTimeString());
+      setStatus('Signed in as ' + auth.currentUser.email + ' — last update ' + new Date().toLocaleTimeString());
     });
 
     startPolling();
-    els.connectBtn.textContent = 'Disconnect';
-    setStatus('Connected as "' + code + '".');
+    setStatus('Signed in as ' + auth.currentUser.email + '.');
   }).catch(function(err){
     setStatus('Could not connect: ' + (err && err.message ? err.message : err));
-    connectedCode = null;
   });
 }
 
-function disconnect(){
-  if(unsubscribe){ unsubscribe(); unsubscribe = null; }
+function stopSyncing(){
+  if(unsubscribeSnapshot){ unsubscribeSnapshot(); unsubscribeSnapshot = null; }
   stopPolling();
   if(pushTimeout){ clearTimeout(pushTimeout); pushTimeout = null; }
-  connectedCode = null;
+  currentUid = null;
   lastPushedFingerprint = null;
-  els.connectBtn.textContent = 'Connect';
-  els.linkRow.hidden = true;
 }
 
-els.connectBtn.addEventListener('click', function(){
-  if(connectedCode){
-    disconnect();
-    setStatus('Disconnected — data stays local to this browser.');
-  } else {
-    connect(els.input.value);
-  }
+function setSignedInUI(signedIn){
+  els.signInBtn.hidden = signedIn;
+  els.signOutBtn.hidden = !signedIn;
+}
+
+els.signInBtn.addEventListener('click', function(){
+  setStatus('Opening Google sign-in…');
+  signInWithPopup(auth, googleProvider).catch(function(err){
+    setStatus('Sign-in failed: ' + (err && err.message ? err.message : err));
+  });
 });
 
-els.copyLinkBtn.addEventListener('click', function(){
-  var link = els.copyLinkBtn.dataset.link || '';
-  if(!link) return;
-  function fallback(){
-    setStatus('Copy failed — select and copy this manually: ' + link);
-  }
-  if(navigator.clipboard && navigator.clipboard.writeText){
-    navigator.clipboard.writeText(link).then(function(){
-      var original = els.copyLinkBtn.textContent;
-      els.copyLinkBtn.textContent = 'Copied!';
-      setTimeout(function(){ els.copyLinkBtn.textContent = original; }, 2000);
-    }).catch(fallback);
-  } else {
-    fallback();
-  }
+els.signOutBtn.addEventListener('click', function(){
+  signOut(auth).catch(function(err){
+    setStatus('Sign-out failed: ' + (err && err.message ? err.message : err));
+  });
 });
 
-// Opening a shared "?sync=CODE" link auto-connects — that's the intended
-// way to add a new device, no typing/remembering a code. Otherwise resume
-// whatever code this browser last used.
-(function boot(){
-  var fromUrl = null;
-  try{ fromUrl = new URLSearchParams(location.search).get('sync'); }catch(e){}
-  if(fromUrl){
-    connect(fromUrl);
-    return;
+// Firebase Auth persists the session in this browser by default, so a
+// returning visit re-fires this with the same user — no manual re-login.
+onAuthStateChanged(auth, function(user){
+  if(user){
+    setSignedInUI(true);
+    startSyncingFor(user.uid);
+  } else {
+    setSignedInUI(false);
+    stopSyncing();
+    setStatus('Not signed in — data stays local to this browser.');
   }
-  var saved = null;
-  try{ saved = localStorage.getItem(STORAGE_SYNC_CODE); }catch(e){}
-  if(saved){
-    els.input.value = saved;
-    connect(saved);
-  }
-})();
+});

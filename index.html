@@ -36,15 +36,12 @@
 
         <hr class="sync-divider">
         <h2>Sync across devices</h2>
-        <p class="preset-note">Connect once here, then open the sync link below on your other devices — no code to remember or type. Deleting an item on one device may not remove it on others — it's an additive merge, like Import above.</p>
+        <p class="preset-note">Sign in with the same Google account on every device to keep data merged automatically. Deleting an item on one device may not remove it on others — it's an additive merge, like Import above.</p>
         <div class="sync-row">
-          <input type="text" id="syncCodeInput" class="inline-edit-input" placeholder="Leave blank to generate a new code" maxlength="80" autocomplete="off">
-          <button type="button" class="btn" id="syncConnectBtn">Connect</button>
+          <button type="button" class="btn" id="syncSignInBtn">Sign in with Google</button>
+          <button type="button" class="btn" id="syncSignOutBtn" hidden>Sign out</button>
         </div>
-        <div class="backup-copy-row" id="syncLinkRow" hidden>
-          <button class="btn-link" id="copySyncLinkBtn">Copy sync link</button>
-        </div>
-        <p class="empty-note" id="syncStatus">Not connected — data stays local to this browser.</p>
+        <p class="empty-note" id="syncStatus">Not signed in — data stays local to this browser.</p>
       </div>
     </div>
   </header>

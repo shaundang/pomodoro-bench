@@ -1,12 +1,11 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // App has no login — access control relies on the "sync code" itself
-    // being a private, hard-to-guess string (like a shared password).
-    // Only documents under /syncs/{code} are reachable; everything else
-    // is explicitly denied.
-    match /syncs/{code} {
-      allow read, write: if true;
+    // Each signed-in user's data lives at /syncs/{their uid}. Only that
+    // user (proven by Firebase Auth, not by knowing a secret string) can
+    // read or write their own document.
+    match /syncs/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
     }
     match /{document=**} {
       allow read, write: if false;
