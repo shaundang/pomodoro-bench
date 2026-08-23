@@ -36,10 +36,13 @@
 
         <hr class="sync-divider">
         <h2>Sync across devices</h2>
-        <p class="preset-note">Enter the same sync code on every device to keep data merged automatically. Deleting an item on one device may not remove it on others — it's an additive merge, like Import above.</p>
+        <p class="preset-note">Connect once here, then open the sync link below on your other devices — no code to remember or type. Deleting an item on one device may not remove it on others — it's an additive merge, like Import above.</p>
         <div class="sync-row">
-          <input type="text" id="syncCodeInput" class="inline-edit-input" placeholder="Sync code (e.g. dat-pomodoro-2026)" maxlength="80" autocomplete="off">
+          <input type="text" id="syncCodeInput" class="inline-edit-input" placeholder="Leave blank to generate a new code" maxlength="80" autocomplete="off">
           <button type="button" class="btn" id="syncConnectBtn">Connect</button>
+        </div>
+        <div class="backup-copy-row" id="syncLinkRow" hidden>
+          <button class="btn-link" id="copySyncLinkBtn">Copy sync link</button>
         </div>
         <p class="empty-note" id="syncStatus">Not connected — data stays local to this browser.</p>
       </div>

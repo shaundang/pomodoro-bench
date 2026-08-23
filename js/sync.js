@@ -38,8 +38,27 @@ var db = getFirestore(app);
 var els = {
   input: document.getElementById('syncCodeInput'),
   connectBtn: document.getElementById('syncConnectBtn'),
-  status: document.getElementById('syncStatus')
+  status: document.getElementById('syncStatus'),
+  linkRow: document.getElementById('syncLinkRow'),
+  copyLinkBtn: document.getElementById('copySyncLinkBtn')
 };
+
+// Random, URL-safe code — good enough entropy that it doubles as the only
+// access control on the Firestore doc (see firestore.rules).
+function generateSyncCode(){
+  var bytes = new Uint8Array(15);
+  (window.crypto || window.msCrypto).getRandomValues(bytes);
+  return Array.prototype.map.call(bytes, function(b){ return b.toString(36); }).join('').slice(0, 20);
+}
+
+function syncLinkFor(code){
+  return location.origin + location.pathname + '?sync=' + encodeURIComponent(code);
+}
+
+function showSyncLink(code){
+  els.linkRow.hidden = false;
+  els.copyLinkBtn.dataset.link = syncLinkFor(code);
+}
 
 var unsubscribe = null;
 var pollHandle = null;
@@ -97,10 +116,12 @@ function stopPolling(){
 
 function connect(code){
   code = (code || '').trim();
-  if(!code){ setStatus('Enter a sync code first.'); return; }
+  if(!code){ code = generateSyncCode(); }
   disconnect();
   connectedCode = code;
+  els.input.value = code;
   try{ localStorage.setItem(STORAGE_SYNC_CODE, code); }catch(e){}
+  showSyncLink(code);
   setStatus('Connecting…');
 
   var ref = doc(db, 'syncs', code);
@@ -142,6 +163,7 @@ function disconnect(){
   connectedCode = null;
   lastPushedFingerprint = null;
   els.connectBtn.textContent = 'Connect';
+  els.linkRow.hidden = true;
 }
 
 els.connectBtn.addEventListener('click', function(){
@@ -153,8 +175,33 @@ els.connectBtn.addEventListener('click', function(){
   }
 });
 
-// Resume a previously-used sync code on page load.
+els.copyLinkBtn.addEventListener('click', function(){
+  var link = els.copyLinkBtn.dataset.link || '';
+  if(!link) return;
+  function fallback(){
+    setStatus('Copy failed — select and copy this manually: ' + link);
+  }
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(link).then(function(){
+      var original = els.copyLinkBtn.textContent;
+      els.copyLinkBtn.textContent = 'Copied!';
+      setTimeout(function(){ els.copyLinkBtn.textContent = original; }, 2000);
+    }).catch(fallback);
+  } else {
+    fallback();
+  }
+});
+
+// Opening a shared "?sync=CODE" link auto-connects — that's the intended
+// way to add a new device, no typing/remembering a code. Otherwise resume
+// whatever code this browser last used.
 (function boot(){
+  var fromUrl = null;
+  try{ fromUrl = new URLSearchParams(location.search).get('sync'); }catch(e){}
+  if(fromUrl){
+    connect(fromUrl);
+    return;
+  }
   var saved = null;
   try{ saved = localStorage.getItem(STORAGE_SYNC_CODE); }catch(e){}
   if(saved){
