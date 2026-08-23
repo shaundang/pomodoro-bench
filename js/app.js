@@ -64,13 +64,6 @@
     peakHourNote: document.getElementById('peakHourNote'),
     categoryAllList: document.getElementById('categoryAllList'),
     categoryRangeTabs: document.getElementById('categoryRangeTabs'),
-    exportBtn: document.getElementById('exportBtn'),
-    importFile: document.getElementById('importFile'),
-    backupText: document.getElementById('backupText'),
-    backupCopyRow: document.getElementById('backupCopyRow'),
-    copyBackupBtn: document.getElementById('copyBackupBtn'),
-    downloadBackupLink: document.getElementById('downloadBackupLink'),
-    importResult: document.getElementById('importResult'),
     resetStatsBtn: document.getElementById('resetStatsBtn'),
     tabTimerBtn: document.getElementById('tabTimerBtn'),
     tabStatsBtn: document.getElementById('tabStatsBtn'),
@@ -1557,10 +1550,6 @@
     };
   }
 
-  function buildBackupPayload(){
-    return JSON.stringify(buildBackupData(), null, 2);
-  }
-
   // Merges an incoming backup object (from a file import or a remote sync
   // pull) into local storage, additively by id — never deletes anything
   // locally. Returns how much was newly added, or throws on an unrecognized
@@ -1636,60 +1625,6 @@
 
     return {addedSessions: addedSessions, addedTasks: addedTasks, addedCategories: addedCategories};
   }
-
-  els.exportBtn.addEventListener('click', function(){
-    var json = buildBackupPayload();
-    els.backupText.hidden = false;
-    els.backupText.value = json;
-    els.backupCopyRow.hidden = false;
-    try{
-      var blob = new Blob([json], {type:'application/json'});
-      var url = URL.createObjectURL(blob);
-      els.downloadBackupLink.href = url;
-    }catch(e){ /* download unavailable, textarea + copy still work */ }
-  });
-
-  els.copyBackupBtn.addEventListener('click', function(){
-    var text = els.backupText.value;
-    function fallbackSelect(){
-      els.backupText.hidden = false;
-      els.backupText.focus();
-      els.backupText.select();
-    }
-    if(navigator.clipboard && navigator.clipboard.writeText){
-      navigator.clipboard.writeText(text).then(function(){
-        var original = els.copyBackupBtn.textContent;
-        els.copyBackupBtn.textContent = 'Copied!';
-        setTimeout(function(){ els.copyBackupBtn.textContent = original; }, 2000);
-      }).catch(fallbackSelect);
-    } else {
-      fallbackSelect();
-    }
-  });
-
-  els.importFile.addEventListener('change', function(e){
-    var file = e.target.files && e.target.files[0];
-    if(!file) return;
-    var reader = new FileReader();
-    reader.onload = function(){
-      var message;
-      try{
-        var data = JSON.parse(reader.result);
-        var result = applyIncomingBackup(data);
-        var addedSessions = result.addedSessions, addedTasks = result.addedTasks, addedCategories = result.addedCategories;
-        message = (addedSessions + addedTasks + addedCategories) > 0
-          ? addedSessions + ' session(s), ' + addedTasks + ' task(s), ' + addedCategories + ' category(ies) imported.'
-          : 'Nothing new to import — already up to date.';
-      }catch(err){
-        message = 'That file isn’t a valid Pomodoro Bench backup.';
-      }
-      els.importResult.textContent = message;
-      els.importResult.hidden = false;
-      setTimeout(function(){ els.importResult.hidden = true; }, 5000);
-      els.importFile.value = '';
-    };
-    reader.readAsText(file);
-  });
 
   // ---------- reset statistics (two-step confirm, no native dialogs) ----------
   var resetArmed = false;

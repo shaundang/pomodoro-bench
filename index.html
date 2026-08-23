@@ -18,25 +18,10 @@
       <h1>Pomodoro Bench</h1>
     </div>
     <div class="backup-menu">
-      <button type="button" class="btn backup-menu-btn" id="backupMenuBtn" aria-haspopup="true" aria-expanded="false">💾 Backup</button>
+      <button type="button" class="btn backup-menu-btn" id="backupMenuBtn" aria-haspopup="true" aria-expanded="false">🔄 Sync</button>
       <div class="backup-menu-panel" id="backupMenuPanel" hidden>
-        <h2>Backup &amp; restore</h2>
-        <p class="preset-note">Data only lives in this browser. Export a copy now and then, or when moving to a new machine.</p>
-        <div class="backup-actions">
-          <button class="btn" id="exportBtn">Export data</button>
-          <label class="btn btn-file" for="importFile">Import data</label>
-          <input type="file" id="importFile" accept="application/json" hidden>
-        </div>
-        <textarea id="backupText" class="backup-text" readonly hidden aria-label="Backup JSON"></textarea>
-        <div class="backup-copy-row" id="backupCopyRow" hidden>
-          <button class="btn-link" id="copyBackupBtn">Copy to clipboard</button>
-          <a class="btn-link" id="downloadBackupLink" download="pomodoro-bench-backup.json">Download .json</a>
-        </div>
-        <p class="empty-note" id="importResult" hidden></p>
-
-        <hr class="sync-divider">
         <h2>Sync across devices</h2>
-        <p class="preset-note">Sign in with the same Google account on every device to keep data merged automatically. Deleting an item on one device may not remove it on others — it's an additive merge, like Import above.</p>
+        <p class="preset-note">Sign in with the same Google account on every device to keep data merged automatically. Deleting an item on one device may not remove it on others — it's an additive merge.</p>
         <div class="sync-row">
           <button type="button" class="btn" id="syncSignInBtn">Sign in with Google</button>
           <button type="button" class="btn" id="syncSignOutBtn" hidden>Sign out</button>
@@ -205,7 +190,7 @@
   </section>
 </div>
 
-<script src="js/app.js?v=3"></script>
-<script type="module" src="js/sync.js?v=3"></script>
+<script src="js/app.js?v=4"></script>
+<script type="module" src="js/sync.js?v=4"></script>
 </body>
 </html>

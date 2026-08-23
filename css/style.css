@@ -161,7 +161,12 @@ button{font-family:inherit;}
 }
 
 /* ---- Backup menu (top-right corner dropdown) ---- */
-.backup-menu{position:relative; flex:0 0 auto;}
+/* margin-left:auto keeps this pinned to the right edge of its flex line
+   even when .masthead wraps to two rows on a narrow screen — without it,
+   a lone wrapped item collapses to the start of its own row instead
+   (space-between has nothing to distribute against), dragging the
+   right-anchored dropdown panel off the left edge of the viewport. */
+.backup-menu{position:relative; flex:0 0 auto; margin-left:auto;}
 .backup-menu-btn{font-size:0.82rem; padding:0.5rem 0.9rem;}
 .backup-menu-panel{
   position:absolute;
