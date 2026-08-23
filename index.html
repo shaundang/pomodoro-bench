@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pomodoro Bench</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8D%85%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;1,9..144,500&family=Work+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div class="page">
+  <header class="masthead">
+    <div class="masthead-text">
+      <span class="eyebrow">Local timer — nothing leaves this browser</span>
+      <h1>Pomodoro Bench</h1>
+    </div>
+    <div class="backup-menu">
+      <button type="button" class="btn backup-menu-btn" id="backupMenuBtn" aria-haspopup="true" aria-expanded="false">💾 Backup</button>
+      <div class="backup-menu-panel" id="backupMenuPanel" hidden>
+        <h2>Backup &amp; restore</h2>
+        <p class="preset-note">Data only lives in this browser. Export a copy now and then, or when moving to a new machine.</p>
+        <div class="backup-actions">
+          <button class="btn" id="exportBtn">Export data</button>
+          <label class="btn btn-file" for="importFile">Import data</label>
+          <input type="file" id="importFile" accept="application/json" hidden>
+        </div>
+        <textarea id="backupText" class="backup-text" readonly hidden aria-label="Backup JSON"></textarea>
+        <div class="backup-copy-row" id="backupCopyRow" hidden>
+          <button class="btn-link" id="copyBackupBtn">Copy to clipboard</button>
+          <a class="btn-link" id="downloadBackupLink" download="pomodoro-bench-backup.json">Download .json</a>
+        </div>
+        <p class="empty-note" id="importResult" hidden></p>
+      </div>
+    </div>
+  </header>
+
+  <nav class="view-tabs" role="tablist" aria-label="View">
+    <button type="button" class="tab-btn" id="tabTimerBtn" role="tab" aria-selected="true" data-view="timer">⏱ Timer</button>
+    <button type="button" class="tab-btn" id="tabStatsBtn" role="tab" aria-selected="false" data-view="stats">📊 Statistics</button>
+  </nav>
+
+  <section class="view view-timer" id="viewTimer" role="tabpanel" aria-labelledby="tabTimerBtn">
+    <div class="card timer-block">
+      <div class="timer-col col-presets">
+        <h2>Session length</h2>
+        <div class="preset-grid" id="presetGrid" role="list"></div>
+        <p class="preset-note" id="presetNote"></p>
+      </div>
+
+      <div class="timer-col col-focus">
+        <div class="ring-wrap" id="ringWrap">
+          <svg viewBox="0 0 120 120">
+            <circle class="ring-track" cx="60" cy="60" r="52"></circle>
+            <circle class="ring-progress" id="ringProgress" cx="60" cy="60" r="52"></circle>
+          </svg>
+          <div class="readout">
+            <span class="mode-label" id="modeLabel">Focus</span>
+            <span class="time" id="timeReadout">25:00</span>
+            <span class="category-label" id="categoryLabel">No task selected</span>
+          </div>
+        </div>
+        <div class="dots" id="cycleDots" aria-hidden="true"></div>
+        <div class="controls">
+          <button class="btn btn-primary" id="startPauseBtn">Start</button>
+          <button class="btn" id="resetBtn">Reset</button>
+          <button class="btn" id="skipBtn">Skip</button>
+        </div>
+        <p class="empty-note" id="noTaskHint" hidden>Pick a task to start focusing.</p>
+        <div class="durations">
+          <label class="duration-field">Focus <input type="number" id="workInput" min="1" max="180" value="25"> min</label>
+          <label class="duration-field">Break <input type="number" id="breakInput" min="1" max="60" value="5"> min</label>
+        </div>
+      </div>
+
+      <div class="timer-col col-tasks">
+        <h2>Tasks</h2>
+        <form class="task-form" id="taskForm">
+          <input type="text" id="newTaskName" placeholder="What do you need to do?" maxlength="140" required>
+          <select id="newTaskCategory"></select>
+          <input type="text" id="newTaskCategoryCreate" class="new-category-input" placeholder="New category name" maxlength="40" hidden>
+          <label class="task-estimate-field" title="Estimated pomodoros">
+            <input type="number" id="newTaskEstimate" min="1" max="20" value="1">
+            <span aria-hidden="true">🍅</span>
+          </label>
+          <button type="submit" class="btn btn-primary" id="addTaskBtn">Add</button>
+        </form>
+        <p class="empty-note" id="noCategoryHint" hidden>Pick "+ New category…" above to create your first one.</p>
+        <ul class="task-list" id="taskList"></ul>
+      </div>
+    </div>
+
+    <div class="banner" id="banner" hidden>
+      <span id="bannerText"></span>
+      <button class="btn" id="bannerAction">Start break</button>
+    </div>
+  </section>
+
+  <section class="view view-stats" id="viewStats" role="tabpanel" aria-labelledby="tabStatsBtn" hidden>
+    <div class="stat-tiles">
+      <div class="tile tile-featured">
+        <span class="tile-value" id="todayMinutes">0h</span>
+        <span class="tile-label">Today</span>
+        <span class="tile-sub" id="todayPomodoros">0 pomodoros</span>
+        <span class="tile-compare" id="todayCompare" hidden></span>
+      </div>
+      <div class="tile">
+        <span class="tile-value" id="streakDays">0</span>
+        <span class="tile-label">Day streak</span>
+        <span class="tile-sub" id="bestStreak">Best 0</span>
+      </div>
+      <div class="tile">
+        <span class="tile-value" id="allTimeTotal">0h</span>
+        <span class="tile-label">All time</span>
+        <span class="tile-sub" id="allTimePomodoros">0 pomodoros</span>
+      </div>
+    </div>
+
+    <div class="stats-grid">
+      <div class="card log-card">
+        <div class="log-card-header">
+          <h2 id="logTitle">Today's log</h2>
+          <div class="log-nav">
+            <button class="icon-btn" id="logPrevBtn" aria-label="Previous day" title="Previous day">‹</button>
+            <button class="btn-link" id="logTodayBtn">Today</button>
+            <button class="icon-btn" id="logNextBtn" aria-label="Next day" title="Next day">›</button>
+            <button class="icon-btn" id="logExpandBtn" aria-label="Expand log" title="Expand log" aria-pressed="false">⤢</button>
+          </div>
+        </div>
+        <ul class="log-list" id="logList"></ul>
+        <p class="empty-note log-count-note" id="logCountNote" hidden></p>
+        <div class="undo-toast" id="undoToast" hidden>
+          <span id="undoText"></span>
+          <button class="btn-link" id="undoBtn">Undo</button>
+        </div>
+      </div>
+
+      <div class="card insights-card">
+        <div class="log-card-header">
+          <h2>Insights</h2>
+          <div class="range-tabs" id="categoryRangeTabs" role="tablist" aria-label="Time range">
+            <button type="button" class="range-tab-btn" role="tab" data-range="day">Day</button>
+            <button type="button" class="range-tab-btn" role="tab" data-range="month">Month</button>
+            <button type="button" class="range-tab-btn" role="tab" data-range="year">Year</button>
+            <button type="button" class="range-tab-btn" role="tab" data-range="all" aria-selected="true">All time</button>
+          </div>
+        </div>
+        <div class="insights-grid">
+          <div class="insight-panel">
+            <h3>By category</h3>
+            <div class="pie-layout">
+              <canvas id="categoryPieChart" width="190" height="190" aria-label="Share of focus time by category"></canvas>
+              <ul class="cat-list cat-list-legend" id="categoryAllList"></ul>
+            </div>
+          </div>
+          <div class="insight-panel">
+            <h3>By hour of day</h3>
+            <canvas id="hourChart" width="360" height="140" aria-label="Focus minutes by hour of day"></canvas>
+            <p class="insight-note" id="peakHourNote"></p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card heatmap-card">
+        <div class="log-card-header">
+          <h2>Pomodoro heatmap</h2>
+          <div class="log-nav">
+            <button class="icon-btn" id="heatmapPrevYearBtn" aria-label="Previous year" title="Previous year">‹</button>
+            <span class="heatmap-year-label" id="heatmapYear"></span>
+            <button class="icon-btn" id="heatmapNextYearBtn" aria-label="Next year" title="Next year">›</button>
+          </div>
+        </div>
+        <div class="heatmap-scroll">
+          <div class="heatmap-inner">
+            <div class="heatmap-months" id="heatmapMonths"></div>
+            <div class="heatmap-grid" id="heatmapGrid"></div>
+          </div>
+        </div>
+        <p class="insight-note" id="heatmapYearTotal"></p>
+        <div class="heatmap-legend">
+          <span class="heat-legend-item"><span class="heat-swatch heat-0"></span>0</span>
+          <span class="heat-legend-item"><span class="heat-swatch heat-1"></span>1–2</span>
+          <span class="heat-legend-item"><span class="heat-swatch heat-2"></span>3–4</span>
+          <span class="heat-legend-item"><span class="heat-swatch heat-3"></span>5–6</span>
+          <span class="heat-legend-item"><span class="heat-swatch heat-4"></span>7+</span>
+          <span class="heatmap-legend-note">pomodoros/day</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="reset-row">
+      <button class="btn btn-ghost-danger" id="resetStatsBtn">Reset statistics</button>
+    </div>
+  </section>
+</div>
+
+<script src="js/app.js"></script>
+</body>
+</html>

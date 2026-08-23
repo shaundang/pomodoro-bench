@@ -1,0 +1,9 @@
+{
+  "name": "pomodoro-bench",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local-only Pomodoro timer with task notes and stats.",
+  "scripts": {
+    "start": "npx serve ."
+  }
+}
