@@ -1316,6 +1316,8 @@
   // Bar chart of focus minutes by hour-of-day (0-23) for the selected range,
   // so it's obvious when in the day attention actually happens — a different
   // question than the heatmap (which day) or the category pie (what).
+  var hourAnimToken = 0;
+
   function renderHourChart(sessions){
     var canvas = els.hourChart;
     var buckets = new Array(24).fill(0);
@@ -1333,6 +1335,9 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cssW, cssH);
 
+    hourAnimToken++;
+    var myToken = hourAnimToken;
+
     if(max <= 0){
       els.peakHourNote.textContent = 'Not enough data yet to spot a pattern.';
       return;
@@ -1348,35 +1353,44 @@
     var gap = 2;
     var barW = (cssW - gap * (n + 1)) / n;
 
-    ctx.strokeStyle = lineColor;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(0, cssH - padBottom + 0.5);
-    ctx.lineTo(cssW, cssH - padBottom + 0.5);
-    ctx.stroke();
-
     var maxIdx = 0;
     for(var i = 1; i < 24; i++){ if(buckets[i] > buckets[maxIdx]) maxIdx = i; }
 
-    for(i = 0; i < n; i++){
-      var x = gap + i * (barW + gap);
-      var h = (buckets[i] / max) * chartH;
-      var y = cssH - padBottom - h;
-      var isPeak = i === maxIdx;
-      ctx.fillStyle = accent;
-      ctx.globalAlpha = isPeak ? 1 : (buckets[i] > 0 ? 0.5 : 0.12);
-      var r = Math.min(3, barW / 2);
-      roundRectTop(ctx, x, y, barW, Math.max(h, 2), r);
-      ctx.fill();
-      ctx.globalAlpha = 1;
+    function draw(progress){
+      ctx.clearRect(0, 0, cssW, cssH);
 
-      if(i % 4 === 0){
-        ctx.fillStyle = inkSoft;
-        ctx.font = '9px "Work Sans", sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(String(i).padStart(2, '0'), x + barW / 2, cssH - 4);
+      ctx.strokeStyle = lineColor;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, cssH - padBottom + 0.5);
+      ctx.lineTo(cssW, cssH - padBottom + 0.5);
+      ctx.stroke();
+
+      for(var j = 0; j < n; j++){
+        var x = gap + j * (barW + gap);
+        var h = (buckets[j] / max) * chartH * progress;
+        var y = cssH - padBottom - h;
+        var isPeak = j === maxIdx;
+        ctx.fillStyle = accent;
+        ctx.globalAlpha = isPeak ? 1 : (buckets[j] > 0 ? 0.5 : 0.12);
+        var r = Math.min(3, barW / 2);
+        roundRectTop(ctx, x, y, barW, Math.max(h, 2), r);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+
+        if(j % 4 === 0){
+          ctx.fillStyle = inkSoft;
+          ctx.font = '9px "Work Sans", sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(String(j).padStart(2, '0'), x + barW / 2, cssH - 4);
+        }
       }
     }
+
+    animateProgress(450, function(p){
+      if(myToken !== hourAnimToken) return; // a newer render superseded this one
+      draw(p);
+    });
 
     function fmt(h){ return String(h).padStart(2, '0') + ':00'; }
     els.peakHourNote.textContent = 'Peak focus hours: ' + fmt(maxIdx) + '–' + fmt((maxIdx + 1) % 24);
@@ -1532,15 +1546,95 @@
   }
 
   // ---------- backup: export / import ----------
-  function buildBackupPayload(){
-    return JSON.stringify({
+  function buildBackupData(){
+    return {
       app: 'pomodoro-bench',
       version: 4,
       exportedAt: nowMs(),
       sessions: loadSessions(),
       tasks: loadTasks(),
       categories: loadCategories()
-    }, null, 2);
+    };
+  }
+
+  function buildBackupPayload(){
+    return JSON.stringify(buildBackupData(), null, 2);
+  }
+
+  // Merges an incoming backup object (from a file import or a remote sync
+  // pull) into local storage, additively by id — never deletes anything
+  // locally. Returns how much was newly added, or throws on an unrecognized
+  // shape. Shared by the file-import handler and js/sync.js.
+  function applyIncomingBackup(data){
+    var incomingSessions = Array.isArray(data) ? data : (data && Array.isArray(data.sessions) ? data.sessions : []);
+    var incomingTasks = (data && Array.isArray(data.tasks)) ? data.tasks : [];
+    if(incomingSessions.length === 0 && incomingTasks.length === 0) throw new Error('invalid backup format');
+
+    var currentSessions = loadSessions();
+    var sessionIds = {};
+    currentSessions.forEach(function(s){ sessionIds[s.id] = true; });
+    var addedSessions = 0;
+    incomingSessions.forEach(function(s){
+      if(!s || typeof s.minutes !== 'number' || !s.date) return;
+      var id = s.id || generateId();
+      if(sessionIds[id]) return;
+      currentSessions.push({
+        id: id,
+        date: s.date,
+        category: s.category || 'Uncategorized',
+        task: s.task || s.note || 'Untitled task',
+        taskId: s.taskId || null,
+        minutes: s.minutes,
+        timestamp: s.timestamp || nowMs(),
+        status: s.status === 'skipped' ? 'skipped' : 'completed'
+      });
+      sessionIds[id] = true;
+      addedSessions += 1;
+    });
+    saveSessions(currentSessions);
+
+    var currentTasks = loadTasks();
+    var taskIds = {};
+    currentTasks.forEach(function(t){ taskIds[t.id] = true; });
+    var addedTasks = 0;
+    incomingTasks.forEach(function(t){
+      if(!t || !t.name) return;
+      var id = t.id || generateId();
+      if(taskIds[id]) return;
+      currentTasks.push({
+        id: id,
+        name: t.name,
+        category: t.category || 'Uncategorized',
+        estimate: typeof t.estimate === 'number' ? t.estimate : 1,
+        completed: typeof t.completed === 'number' ? t.completed : 0,
+        done: !!t.done,
+        createdAt: t.createdAt || nowMs(),
+        sessionPresetId: t.sessionPresetId || 'deep',
+        workMin: typeof t.workMin === 'number' ? t.workMin : 50,
+        breakMin: typeof t.breakMin === 'number' ? t.breakMin : 10,
+        notes: Array.isArray(t.notes) ? t.notes : []
+      });
+      taskIds[id] = true;
+      addedTasks += 1;
+    });
+    saveTasks(currentTasks);
+
+    var incomingCategories = (data && Array.isArray(data.categories)) ? data.categories : [];
+    var currentCategories = loadCategories();
+    var addedCategories = 0;
+    incomingCategories.forEach(function(name){
+      if(typeof name !== 'string' || !name.trim()) return;
+      var exists = currentCategories.some(function(c){ return c.toLowerCase() === name.toLowerCase(); });
+      if(!exists){ currentCategories.push(name.trim()); addedCategories += 1; }
+    });
+    saveCategories(currentCategories);
+    fillCategorySelectWithNew(els.newTaskCategory, currentCategories, els.newTaskCategory.value);
+    updateCategoryFormAvailability();
+
+    renderTasks();
+    refreshStats();
+
+    return {addedSessions: addedSessions, addedTasks: addedTasks, addedCategories: addedCategories};
   }
 
   els.exportBtn.addEventListener('click', function(){
@@ -1581,73 +1675,8 @@
       var message;
       try{
         var data = JSON.parse(reader.result);
-        var incomingSessions = Array.isArray(data) ? data : (data && Array.isArray(data.sessions) ? data.sessions : []);
-        var incomingTasks = (data && Array.isArray(data.tasks)) ? data.tasks : [];
-        if(incomingSessions.length === 0 && incomingTasks.length === 0) throw new Error('invalid backup format');
-
-        var currentSessions = loadSessions();
-        var sessionIds = {};
-        currentSessions.forEach(function(s){ sessionIds[s.id] = true; });
-        var addedSessions = 0;
-        incomingSessions.forEach(function(s){
-          if(!s || typeof s.minutes !== 'number' || !s.date) return;
-          var id = s.id || generateId();
-          if(sessionIds[id]) return;
-          currentSessions.push({
-            id: id,
-            date: s.date,
-            category: s.category || 'Uncategorized',
-            task: s.task || s.note || 'Untitled task',
-            taskId: s.taskId || null,
-            minutes: s.minutes,
-            timestamp: s.timestamp || nowMs(),
-            status: s.status === 'skipped' ? 'skipped' : 'completed'
-          });
-          sessionIds[id] = true;
-          addedSessions += 1;
-        });
-        saveSessions(currentSessions);
-
-        var currentTasks = loadTasks();
-        var taskIds = {};
-        currentTasks.forEach(function(t){ taskIds[t.id] = true; });
-        var addedTasks = 0;
-        incomingTasks.forEach(function(t){
-          if(!t || !t.name) return;
-          var id = t.id || generateId();
-          if(taskIds[id]) return;
-          currentTasks.push({
-            id: id,
-            name: t.name,
-            category: t.category || 'Uncategorized',
-            estimate: typeof t.estimate === 'number' ? t.estimate : 1,
-            completed: typeof t.completed === 'number' ? t.completed : 0,
-            done: !!t.done,
-            createdAt: t.createdAt || nowMs(),
-            sessionPresetId: t.sessionPresetId || 'deep',
-            workMin: typeof t.workMin === 'number' ? t.workMin : 50,
-            breakMin: typeof t.breakMin === 'number' ? t.breakMin : 10,
-            notes: Array.isArray(t.notes) ? t.notes : []
-          });
-          taskIds[id] = true;
-          addedTasks += 1;
-        });
-        saveTasks(currentTasks);
-
-        var incomingCategories = (data && Array.isArray(data.categories)) ? data.categories : [];
-        var currentCategories = loadCategories();
-        var addedCategories = 0;
-        incomingCategories.forEach(function(name){
-          if(typeof name !== 'string' || !name.trim()) return;
-          var exists = currentCategories.some(function(c){ return c.toLowerCase() === name.toLowerCase(); });
-          if(!exists){ currentCategories.push(name.trim()); addedCategories += 1; }
-        });
-        saveCategories(currentCategories);
-        fillCategorySelectWithNew(els.newTaskCategory, currentCategories, els.newTaskCategory.value);
-        updateCategoryFormAvailability();
-
-        renderTasks();
-        refreshStats();
+        var result = applyIncomingBackup(data);
+        var addedSessions = result.addedSessions, addedTasks = result.addedTasks, addedCategories = result.addedCategories;
         message = (addedSessions + addedTasks + addedCategories) > 0
           ? addedSessions + ' session(s), ' + addedTasks + ' task(s), ' + addedCategories + ' category(ies) imported.'
           : 'Nothing new to import — already up to date.';
@@ -1825,5 +1854,17 @@
   }
   renderTimer();
   refreshStats();
+
+  // ---------- external integration hook (used by js/sync.js) ----------
+  // Exposes just enough for the optional multi-device sync module to read/
+  // merge data the same way file import already does, without reaching
+  // into any other internals of this closure.
+  window.PomodoroBench = {
+    STORAGE_SESSIONS: STORAGE_SESSIONS,
+    STORAGE_TASKS: STORAGE_TASKS,
+    STORAGE_CATEGORIES: STORAGE_CATEGORIES,
+    buildBackupData: buildBackupData,
+    applyIncomingBackup: applyIncomingBackup
+  };
 
 })();

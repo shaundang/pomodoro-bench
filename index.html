@@ -33,6 +33,15 @@
           <a class="btn-link" id="downloadBackupLink" download="pomodoro-bench-backup.json">Download .json</a>
         </div>
         <p class="empty-note" id="importResult" hidden></p>
+
+        <hr class="sync-divider">
+        <h2>Sync across devices</h2>
+        <p class="preset-note">Enter the same sync code on every device to keep data merged automatically. Deleting an item on one device may not remove it on others — it's an additive merge, like Import above.</p>
+        <div class="sync-row">
+          <input type="text" id="syncCodeInput" class="inline-edit-input" placeholder="Sync code (e.g. dat-pomodoro-2026)" maxlength="80" autocomplete="off">
+          <button type="button" class="btn" id="syncConnectBtn">Connect</button>
+        </div>
+        <p class="empty-note" id="syncStatus">Not connected — data stays local to this browser.</p>
       </div>
     </div>
   </header>
@@ -197,5 +206,6 @@
 </div>
 
 <script src="js/app.js"></script>
+<script type="module" src="js/sync.js"></script>
 </body>
 </html>

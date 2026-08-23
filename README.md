@@ -208,6 +208,25 @@ chỉ chặn không cho đi tới năm tương lai); dưới heatmap hiện tổ
 (nhóm chặt bằng khoảng cách CSS) để tránh nhìn lẫn màu của ô này với số của
 ô bên cạnh.
 
+## Animation
+
+Thêm vài hiệu ứng động nhẹ, tôn trọng `prefers-reduced-motion` (tắt hết nếu
+hệ điều hành đặt giảm hiệu ứng động):
+
+- **Chuyển tab / mở Statistics**: nội dung mờ dần trượt lên khi hiện ra, các
+  card/tile xuất hiện lệch nhịp nhau (stagger) 1 chút thay vì bật hết cùng lúc.
+- **Bấm nút**: mọi nút (preset, tab, icon-btn, checkbox task...) hơi co lại
+  khi bấm — phản hồi chạm rõ hơn.
+- **Vòng đồng hồ**: "thở" nhẹ (glow mờ dần) trong lúc đang chạy, để biết ngay
+  đồng hồ có đang tính giờ không mà không cần nhìn số.
+- **Thanh tiến trình pomodoro** trên task card chuyển động mượt khi tăng lên,
+  không nhảy khựng.
+- **Banner hết phiên, toast Undo, dropdown Backup**: trượt/mờ dần vào thay vì
+  hiện đột ngột.
+- **Biểu đồ "By category" và "By hour of day"**: vẽ dần (donut quét theo
+  chiều kim đồng hồ, cột giờ mọc lên) mỗi khi đổi tab Day/Month/Year/All time,
+  thay vì hiện khựng toàn bộ ngay lập tức.
+
 ## Tuỳ biến
 
 - **Preset độ dài phiên**: sửa mảng `PRESETS` ở đầu file `js/app.js` (id, tên,
