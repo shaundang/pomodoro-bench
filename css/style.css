@@ -127,7 +127,7 @@ button{font-family:inherit;}
 
 .masthead{
   display:flex;
-  align-items:flex-start;
+  align-items:center;
   justify-content:space-between;
   gap:1rem;
   flex-wrap:wrap;
@@ -136,13 +136,6 @@ button{font-family:inherit;}
   display:flex;
   flex-direction:column;
   gap:0.35rem;
-}
-.eyebrow{
-  font-size:0.72rem;
-  letter-spacing:0.09em;
-  text-transform:uppercase;
-  color:var(--ink-soft);
-  font-weight:500;
 }
 .masthead h1{
   font-family:"Fraunces", Georgia, serif;
