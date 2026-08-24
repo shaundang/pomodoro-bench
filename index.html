@@ -150,7 +150,10 @@
           </div>
           <div class="insight-panel">
             <h3>By hour of day</h3>
-            <canvas id="hourChart" width="360" height="140" aria-label="Focus and break minutes by hour of day"></canvas>
+            <div class="hour-chart-wrap">
+              <canvas id="hourChart" width="360" height="140" aria-label="Focus and break minutes by hour of day"></canvas>
+              <div class="hour-chart-tooltip" id="hourChartTooltip" hidden></div>
+            </div>
             <div class="hour-chart-legend">
               <span class="hour-legend-item"><span class="hour-swatch hour-swatch-focus"></span>Focus</span>
               <span class="hour-legend-item"><span class="hour-swatch hour-swatch-break"></span>Break</span>
@@ -193,7 +196,7 @@
   </section>
 </div>
 
-<script src="js/app.js?v=5"></script>
-<script type="module" src="js/sync.js?v=5"></script>
+<script src="js/app.js?v=6"></script>
+<script type="module" src="js/sync.js?v=6"></script>
 </body>
 </html>

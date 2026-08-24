@@ -61,6 +61,7 @@
     undoText: document.getElementById('undoText'),
     undoBtn: document.getElementById('undoBtn'),
     hourChart: document.getElementById('hourChart'),
+    hourChartTooltip: document.getElementById('hourChartTooltip'),
     peakHourNote: document.getElementById('peakHourNote'),
     categoryAllList: document.getElementById('categoryAllList'),
     categoryRangeTabs: document.getElementById('categoryRangeTabs'),
@@ -1323,6 +1324,10 @@
   // followed by a 3:25-3:30 break both land in the "03" bar, so the sliver of
   // break color on top of it shows the split at a glance.
   var hourAnimToken = 0;
+  // Geometry + per-hour totals from the most recent render, read by the
+  // hover tooltip so it doesn't have to redo the bucketing on every
+  // mousemove. Null whenever there's nothing drawn to hover over.
+  var hourChartGeom = null;
 
   function renderHourChart(sessions){
     var canvas = els.hourChart;
@@ -1351,6 +1356,8 @@
 
     if(max <= 0){
       els.peakHourNote.textContent = 'Not enough data yet to spot a pattern.';
+      hourChartGeom = null;
+      hideHourChartTooltip();
       return;
     }
 
@@ -1367,6 +1374,16 @@
 
     var maxIdx = 0;
     for(var i = 1; i < 24; i++){ if(focusBuckets[i] > focusBuckets[maxIdx]) maxIdx = i; }
+
+    hourChartGeom = {
+      focusBuckets: focusBuckets,
+      breakBuckets: breakBuckets,
+      cssW: cssW,
+      padBottom: padBottom,
+      gap: gap,
+      barW: barW,
+      n: n
+    };
 
     function draw(progress){
       ctx.clearRect(0, 0, cssW, cssH);
@@ -1423,6 +1440,41 @@
     var breakTotal = breakBuckets.reduce(function(a, b){ return a + b; }, 0);
     els.peakHourNote.textContent = 'Peak focus hours: ' + fmt(maxIdx) + '–' + fmt((maxIdx + 1) % 24) +
       '. Rest logged: ' + breakTotal + ' min in this period.';
+  }
+
+  function hideHourChartTooltip(){
+    if(els.hourChartTooltip) els.hourChartTooltip.hidden = true;
+  }
+
+  // Hovering a bar shows exactly how many focus/break minutes it holds —
+  // the bar height alone only gives a rough sense of that.
+  function handleHourChartHover(evt){
+    if(!hourChartGeom){ hideHourChartTooltip(); return; }
+    var g = hourChartGeom;
+    var x = evt.offsetX;
+    var idx = Math.floor((x - g.gap) / (g.barW + g.gap));
+    if(idx < 0 || idx >= g.n){ hideHourChartTooltip(); return; }
+
+    var focusMin = g.focusBuckets[idx];
+    var breakMin = g.breakBuckets[idx];
+    if(focusMin <= 0 && breakMin <= 0){ hideHourChartTooltip(); return; }
+
+    function fmtH(h){ return String(h).padStart(2, '0') + ':00'; }
+    var tip = els.hourChartTooltip;
+    tip.innerHTML =
+      '<strong>' + fmtH(idx) + '–' + fmtH((idx + 1) % 24) + '</strong><br>' +
+      '<span class="tt-focus">Focus: ' + focusMin + ' min</span><br>' +
+      '<span class="tt-break">Break: ' + breakMin + ' min</span>';
+    tip.style.left = (g.gap + idx * (g.barW + g.gap) + g.barW / 2) + 'px';
+    tip.hidden = false;
+  }
+
+  var hourChartHoverWired = false;
+  function wireHourChartHover(){
+    if(hourChartHoverWired || !els.hourChart) return;
+    hourChartHoverWired = true;
+    els.hourChart.addEventListener('mousemove', handleHourChartHover);
+    els.hourChart.addEventListener('mouseleave', hideHourChartTooltip);
   }
 
   // Filters sessions down to the period the "By category" chart's tabs ask
@@ -1828,6 +1880,7 @@
   }
   renderTimer();
   refreshStats();
+  wireHourChartHover();
 
   // ---------- external integration hook (used by js/sync.js) ----------
   // Exposes just enough for the optional multi-device sync module to read/
