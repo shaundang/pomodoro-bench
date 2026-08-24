@@ -452,13 +452,15 @@
     playChime(1);
 
     if(state.mode === 'focus'){
-      logSession(state.workMin, 'completed');
+      logSession(state.workMin, 'completed', 'focus');
       incrementTaskCompleted(state.activeTaskId);
       state.completedInCycle += 1;
       var goingLong = state.completedInCycle % 4 === 0;
       state.mode = goingLong ? 'longbreak' : 'break';
       showBanner('Focus session done. Nice work — take a break.', 'Start break');
     } else {
+      // state.totalMs is this break's own duration (short or long), set when it started.
+      logSession(Math.round(state.totalMs / 60000), 'completed', 'break');
       state.mode = 'focus';
       showBanner('Break’s over. Ready when you are.', 'Start focus');
     }
@@ -519,14 +521,12 @@
     state.running = false;
     stopTicking();
 
-    if(state.mode === 'focus'){
-      var elapsedMs = state.totalMs - Math.max(0, state.remainingMs);
-      var elapsedMin = Math.round(elapsedMs / 60000);
-      if(elapsedMin >= 1){
-        logSession(elapsedMin, 'skipped');
-      }
-      refreshStats();
+    var elapsedMs = state.totalMs - Math.max(0, state.remainingMs);
+    var elapsedMin = Math.round(elapsedMs / 60000);
+    if(elapsedMin >= 1){
+      logSession(elapsedMin, 'skipped', state.mode === 'focus' ? 'focus' : 'break');
     }
+    refreshStats();
 
     state.endAt = null;
     if(state.mode === 'focus'){
@@ -944,6 +944,8 @@
         if(!s.id){ s.id = generateId(); migrated = true; }
         if(!s.status){ s.status = 'completed'; migrated = true; }
         if(!s.task){ s.task = s.note || 'Untitled task'; migrated = true; }
+        // Older entries predate break tracking — they're all focus sessions.
+        if(!s.type){ s.type = 'focus'; migrated = true; }
       });
       if(migrated) saveSessions(arr);
       return arr;
@@ -954,7 +956,7 @@
     try{ localStorage.setItem(STORAGE_SESSIONS, JSON.stringify(arr)); }catch(e){ /* ignore */ }
   }
 
-  function logSession(minutes, status){
+  function logSession(minutes, status, type){
     var sessions = loadSessions();
     var ts = nowMs();
     sessions.push({
@@ -965,19 +967,24 @@
       taskId: state.activeTaskId || null,
       minutes: minutes,
       timestamp: ts,
-      status: status || 'completed'
+      status: status || 'completed',
+      type: type || 'focus'
     });
     saveSessions(sessions);
   }
 
   function refreshStats(){
     var sessions = loadSessions();
+    // The featured tiles, streaks and heatmap are all about focus work —
+    // break entries exist for the hour-of-day chart and the daily log, but
+    // must not inflate "minutes worked" or "pomodoros completed".
+    var focusSessions = sessions.filter(function(s){ return s.type !== 'break'; });
     var today = todayKey();
 
     var todayMin = 0, todayCount = 0;
     var daysWithSessions = {};
     var allTimeMin = 0, allTimePomodoros = 0;
-    sessions.forEach(function(s){
+    focusSessions.forEach(function(s){
       allTimeMin += s.minutes;
       daysWithSessions[s.date] = true;
       if(s.status === 'completed') allTimePomodoros += 1;
@@ -1026,7 +1033,7 @@
 
     renderLogForDate(sessions);
     renderInsights(sessions);
-    renderYearHeatmap(sessions);
+    renderYearHeatmap(focusSessions);
   }
 
   // ---------- yearly pomodoro heatmap (Jan 1 - Dec 31, current year) ----------
@@ -1195,11 +1202,12 @@
     var timeStr = time ? String(time.getHours()).padStart(2,'0') + ':' + String(time.getMinutes()).padStart(2,'0') : '—';
     var taskStr = s.task ? s.task : '—';
     var statusTag = s.status === 'skipped' ? ' <span class="log-status-tag">· cut short</span>' : '';
+    var typeTag = s.type === 'break' ? ' <span class="log-status-tag">· break</span>' : '';
     li.innerHTML =
       '<span class="log-time">' + timeStr + '</span>' +
       '<span class="log-detail">' +
         '<span class="log-category">' +
-          '<span class="cat-pill ' + categoryColorClass(s.category) + '">' + escapeHtml(s.category) + '</span>' + statusTag +
+          '<span class="cat-pill ' + categoryColorClass(s.category) + '">' + escapeHtml(s.category) + '</span>' + statusTag + typeTag +
         '</span>' +
         '<span class="log-note" title="' + escapeAttr(taskStr) + '">' + escapeHtml(taskStr) + '</span>' +
       '</span>' +
@@ -1306,18 +1314,28 @@
     requestAnimationFrame(step);
   }
 
-  // Bar chart of focus minutes by hour-of-day (0-23) for the selected range,
-  // so it's obvious when in the day attention actually happens — a different
-  // question than the heatmap (which day) or the category pie (what).
+  // Stacked bar chart of minutes by hour-of-day (0-23) for the selected range:
+  // focus minutes stacked with break minutes in the same bar, so it's obvious
+  // both when in the day attention actually happens AND whether rest is
+  // actually being taken in proportion to it — a different question than the
+  // heatmap (which day) or the category pie (what). With the "Day" range this
+  // also doubles as a rough within-hour timeline: a 3:00-3:25 pomodoro
+  // followed by a 3:25-3:30 break both land in the "03" bar, so the sliver of
+  // break color on top of it shows the split at a glance.
   var hourAnimToken = 0;
 
   function renderHourChart(sessions){
     var canvas = els.hourChart;
-    var buckets = new Array(24).fill(0);
+    var focusBuckets = new Array(24).fill(0);
+    var breakBuckets = new Array(24).fill(0);
     sessions.forEach(function(s){
-      if(s.timestamp) buckets[new Date(s.timestamp).getHours()] += s.minutes;
+      if(!s.timestamp) return;
+      var h = new Date(s.timestamp).getHours();
+      if(s.type === 'break') breakBuckets[h] += s.minutes;
+      else focusBuckets[h] += s.minutes;
     });
-    var max = Math.max.apply(null, buckets);
+    var totals = focusBuckets.map(function(f, i){ return f + breakBuckets[i]; });
+    var max = Math.max.apply(null, totals);
 
     var dpr = window.devicePixelRatio || 1;
     var cssW = canvas.clientWidth || 320;
@@ -1338,6 +1356,7 @@
 
     var lineColor = getComputedStyle(document.documentElement).getPropertyValue('--line').trim();
     var accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+    var breakColor = getComputedStyle(document.documentElement).getPropertyValue('--good').trim();
     var inkSoft = getComputedStyle(document.documentElement).getPropertyValue('--ink-soft').trim();
 
     var padBottom = 16, padTop = 4;
@@ -1347,7 +1366,7 @@
     var barW = (cssW - gap * (n + 1)) / n;
 
     var maxIdx = 0;
-    for(var i = 1; i < 24; i++){ if(buckets[i] > buckets[maxIdx]) maxIdx = i; }
+    for(var i = 1; i < 24; i++){ if(focusBuckets[i] > focusBuckets[maxIdx]) maxIdx = i; }
 
     function draw(progress){
       ctx.clearRect(0, 0, cssW, cssH);
@@ -1359,16 +1378,31 @@
       ctx.lineTo(cssW, cssH - padBottom + 0.5);
       ctx.stroke();
 
+      var r = Math.min(3, barW / 2);
       for(var j = 0; j < n; j++){
         var x = gap + j * (barW + gap);
-        var h = (buckets[j] / max) * chartH * progress;
-        var y = cssH - padBottom - h;
+        var hasData = totals[j] > 0;
         var isPeak = j === maxIdx;
-        ctx.fillStyle = accent;
-        ctx.globalAlpha = isPeak ? 1 : (buckets[j] > 0 ? 0.5 : 0.12);
-        var r = Math.min(3, barW / 2);
-        roundRectTop(ctx, x, y, barW, Math.max(h, 2), r);
-        ctx.fill();
+        var alpha = isPeak ? 1 : (hasData ? 0.5 : 0.12);
+
+        var focusH = (focusBuckets[j] / max) * chartH * progress;
+        var breakH = (breakBuckets[j] / max) * chartH * progress;
+        var focusTopY = cssH - padBottom - focusH;
+        var stackTopY = focusTopY - breakH;
+
+        ctx.globalAlpha = alpha;
+        if(focusBuckets[j] > 0 || !hasData){
+          // Flat top when a break segment sits above it, rounded when it's alone.
+          ctx.fillStyle = accent;
+          var focusRadius = breakBuckets[j] > 0 ? 0 : r;
+          roundRectTop(ctx, x, focusTopY, barW, Math.max(focusH, 2), focusRadius);
+          ctx.fill();
+        }
+        if(breakBuckets[j] > 0){
+          ctx.fillStyle = breakColor;
+          roundRectTop(ctx, x, stackTopY, barW, Math.max(breakH, 2), r);
+          ctx.fill();
+        }
         ctx.globalAlpha = 1;
 
         if(j % 4 === 0){
@@ -1386,7 +1420,9 @@
     });
 
     function fmt(h){ return String(h).padStart(2, '0') + ':00'; }
-    els.peakHourNote.textContent = 'Peak focus hours: ' + fmt(maxIdx) + '–' + fmt((maxIdx + 1) % 24);
+    var breakTotal = breakBuckets.reduce(function(a, b){ return a + b; }, 0);
+    els.peakHourNote.textContent = 'Peak focus hours: ' + fmt(maxIdx) + '–' + fmt((maxIdx + 1) % 24) +
+      '. Rest logged: ' + breakTotal + ' min in this period.';
   }
 
   // Filters sessions down to the period the "By category" chart's tabs ask
@@ -1412,7 +1448,9 @@
   // "By hour of day" always agree on what period they're describing.
   function renderInsights(sessions){
     var filtered = sessionsInRange(sessions, categoryRange);
-    renderCategoryPie(filtered);
+    // Category breakdown is about focus work only; the hour-of-day chart
+    // wants both focus and break minutes to show the split.
+    renderCategoryPie(filtered.filter(function(s){ return s.type !== 'break'; }));
     renderHourChart(filtered);
   }
 
@@ -1575,7 +1613,8 @@
         taskId: s.taskId || null,
         minutes: s.minutes,
         timestamp: s.timestamp || nowMs(),
-        status: s.status === 'skipped' ? 'skipped' : 'completed'
+        status: s.status === 'skipped' ? 'skipped' : 'completed',
+        type: s.type === 'break' ? 'break' : 'focus'
       });
       sessionIds[id] = true;
       addedSessions += 1;
