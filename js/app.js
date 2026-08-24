@@ -557,6 +557,11 @@
         if(typeof t.workMin !== 'number'){ t.workMin = 50; migrated = true; }
         if(typeof t.breakMin !== 'number'){ t.breakMin = 10; migrated = true; }
         if(!Array.isArray(t.notes)){ t.notes = []; migrated = true; }
+        // Tasks finished before this field existed have no way to know when
+        // that happened — treat them as done "in the past" so they hide
+        // immediately rather than lingering on the list forever.
+        if(t.done && typeof t.doneAt !== 'number'){ t.doneAt = 0; migrated = true; }
+        if(!t.done && t.doneAt){ t.doneAt = null; migrated = true; }
       });
       if(migrated) saveTasks(arr);
       return arr;
@@ -580,6 +585,7 @@
       estimate: Math.max(1, Math.min(20, estimate || 1)),
       completed: 0,
       done: false,
+      doneAt: null,
       createdAt: nowMs(),
       sessionPresetId: state.presetId,
       workMin: state.workMin,
@@ -620,6 +626,7 @@
     var t = tasks.filter(function(x){ return x.id === id; })[0];
     if(!t) return;
     t.done = !t.done;
+    t.doneAt = t.done ? nowMs() : null;
     saveTasks(tasks);
     if(t.done && state.activeTaskId === id){ clearActiveTask(); }
     renderTasks();
@@ -670,6 +677,10 @@
     t.estimate = Math.max(1, Math.min(20, parseInt(estInput.value, 10) || t.estimate));
 
     var chosenPreset = PRESETS.filter(function(p){ return p.id === sessionInput.value; })[0];
+    // Only a genuine session-length change should touch the running/paused
+    // phase — editing the name, category or notes on the active task must
+    // never wipe out time already spent on a paused session.
+    var presetChanged = !!chosenPreset && chosenPreset.id !== t.sessionPresetId;
     if(chosenPreset){
       t.sessionPresetId = chosenPreset.id;
       t.workMin = chosenPreset.work;
@@ -683,7 +694,7 @@
     if(state.activeTaskId === id){
       state.activeTaskName = t.name;
       state.activeTaskCategory = t.category;
-      if(!state.running){
+      if(!state.running && presetChanged){
         state.presetId = t.sessionPresetId;
         state.workMin = t.workMin;
         state.breakMin = t.breakMin;
@@ -711,13 +722,22 @@
   }
 
   function renderTasks(){
-    var tasks = loadTasks();
+    var allTasks = loadTasks();
+    // Unfinished tasks always stay put; a finished one only stays visible
+    // through the rest of the day it was checked off, then drops out of the
+    // list on its own from the next day — no manual "clear completed" needed.
+    var today = todayKey();
+    var tasks = allTasks.filter(function(t){
+      return !t.done || todayKey(new Date(t.doneAt || 0)) === today;
+    });
     els.taskList.innerHTML = '';
     els.taskList.classList.toggle('task-list-locked', state.running);
     if(tasks.length === 0){
       var empty = document.createElement('p');
       empty.className = 'empty-note';
-      empty.textContent = 'No tasks yet — add one above to get started.';
+      empty.textContent = allTasks.length === 0
+        ? 'No tasks yet — add one above to get started.'
+        : 'All done for today 🎉 — add a new task above.';
       els.taskList.appendChild(empty);
       return;
     }
@@ -1688,6 +1708,7 @@
         estimate: typeof t.estimate === 'number' ? t.estimate : 1,
         completed: typeof t.completed === 'number' ? t.completed : 0,
         done: !!t.done,
+        doneAt: typeof t.doneAt === 'number' ? t.doneAt : (t.done ? 0 : null),
         createdAt: t.createdAt || nowMs(),
         sessionPresetId: t.sessionPresetId || 'deep',
         workMin: typeof t.workMin === 'number' ? t.workMin : 50,
