@@ -967,16 +967,27 @@ button{font-family:inherit;}
   color:var(--ink);
   font-weight:600;
 }
-.custom-range-picker{
-  display:flex;
-  gap:1.1rem;
-  flex-wrap:wrap;
-  align-items:center;
-  margin:-0.2rem 0 0.9rem;
-}
+.custom-range-picker{margin:-0.2rem 0 0.9rem;}
 .custom-range-picker[hidden]{display:none;}
-.date-picker-field{display:flex; align-items:center; gap:0.5rem;}
-.date-picker-field-label{font-size:0.76rem; color:var(--ink-soft);}
+
+/* Inline range calendar for the Insights "Custom" tab: always visible
+   (no trigger button to open it), first click sets the start date, second
+   click sets the end date, and hovering after the first click previews the
+   span with a soft band before it's confirmed. */
+.range-picker{
+  display:inline-block;
+  width:250px;
+  background:var(--paper);
+  border:1px solid var(--line);
+  border-radius:10px;
+  padding:0.75rem 0.8rem 0.85rem;
+}
+.range-picker-summary{
+  font-size:0.78rem;
+  color:var(--ink-soft);
+  margin:0 0 0.6rem;
+}
+.range-picker-summary strong{color:var(--ink); font-weight:600;}
 
 /* ---- Custom calendar date picker (replaces the native <input type=date>,
    which renders inconsistently across browsers/OSes and can't be themed) ---- */
@@ -1059,6 +1070,20 @@ button{font-family:inherit;}
 }
 .date-picker-day:disabled{color:var(--ink-soft); opacity:0.3; cursor:default;}
 .date-picker-today{display:block; margin:0.4rem auto 0;}
+
+/* Range band (Insights "Custom" calendar): the faint orange trail between
+   the start date and wherever the user has clicked or is currently
+   hovering. Endpoints are solid and half-rounded on the side that meets
+   the band so the two ends read as one continuous span. */
+.range-day-in{background:var(--accent-soft); border-radius:0;}
+.range-day-start, .range-day-end, .range-day-single{
+  background:var(--accent);
+  color:var(--accent-ink);
+  font-weight:700;
+}
+.range-day-start{border-radius:999px 0 0 999px;}
+.range-day-end{border-radius:0 999px 999px 0;}
+.range-day-single{border-radius:999px;}
 .cat-row-legend{justify-content:space-between;}
 .cat-pct{
   flex:0 0 auto;

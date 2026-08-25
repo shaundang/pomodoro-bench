@@ -67,8 +67,7 @@
     categoryAllList: document.getElementById('categoryAllList'),
     categoryRangeTabs: document.getElementById('categoryRangeTabs'),
     customRangePicker: document.getElementById('customRangePicker'),
-    customRangeFromPicker: document.getElementById('customRangeFromPicker'),
-    customRangeToPicker: document.getElementById('customRangeToPicker'),
+    customRangeCalendar: document.getElementById('customRangeCalendar'),
     resetStatsBtn: document.getElementById('resetStatsBtn'),
     tabTimerBtn: document.getElementById('tabTimerBtn'),
     tabStatsBtn: document.getElementById('tabStatsBtn'),
@@ -1352,6 +1351,169 @@
     if(e.key === 'Escape' && openDatePicker) openDatePicker.close();
   });
 
+  // Inline range calendar for Insights' "Custom" tab. Always visible (no
+  // trigger button): first click sets the start date; while picking the
+  // second, hovering previews the span as a soft band; second click
+  // confirms it. Clicking again after a range is confirmed starts a new one.
+  function createRangeDatePicker(rootEl, opts){
+    opts = opts || {};
+    var from = opts.from || '';
+    var to = opts.to || '';
+    var max = opts.max || '';
+    var onChange = opts.onChange || function(){};
+    var selecting = false; // true once the start date is picked, before the end date is confirmed
+    var hoverDate = null;
+
+    rootEl.innerHTML =
+      '<p class="range-picker-summary"></p>' +
+      '<div class="date-picker-header">' +
+        '<button type="button" class="icon-btn range-picker-prev" aria-label="Previous month">‹</button>' +
+        '<span class="date-picker-month-label"></span>' +
+        '<button type="button" class="icon-btn range-picker-next" aria-label="Next month">›</button>' +
+      '</div>' +
+      '<div class="date-picker-weekdays">' +
+        ['Mo','Tu','We','Th','Fr','Sa','Su'].map(function(w){ return '<span>' + w + '</span>'; }).join('') +
+      '</div>' +
+      '<div class="date-picker-grid range-picker-grid"></div>';
+
+    var summary = rootEl.querySelector('.range-picker-summary');
+    var monthLabel = rootEl.querySelector('.date-picker-month-label');
+    var grid = rootEl.querySelector('.range-picker-grid');
+    var prevBtn = rootEl.querySelector('.range-picker-prev');
+    var nextBtn = rootEl.querySelector('.range-picker-next');
+    var viewYear, viewMonth;
+
+    function pad2(n){ return n < 10 ? '0' + n : String(n); }
+    function keyFor(y, m, day){ return y + '-' + pad2(m + 1) + '-' + pad2(day); }
+    function fmtShort(v){
+      var d = new Date(v + 'T00:00:00');
+      return MONTH_NAMES[d.getMonth()] + ' ' + d.getDate() + ', ' + d.getFullYear();
+    }
+
+    function setViewFrom(dateStr){
+      var d = new Date((dateStr || todayKey()) + 'T00:00:00');
+      viewYear = d.getFullYear();
+      viewMonth = d.getMonth();
+    }
+
+    function renderSummary(){
+      if(selecting){
+        summary.innerHTML = '<strong>' + fmtShort(from) + '</strong> — pick an end date';
+      } else if(from && to){
+        summary.innerHTML = '<strong>' + fmtShort(from) + '</strong> to <strong>' + fmtShort(to) + '</strong>';
+      } else {
+        summary.textContent = 'Pick a start date';
+      }
+    }
+
+    function renderGrid(){
+      monthLabel.textContent = MONTH_NAMES[viewMonth] + ' ' + viewYear;
+      var firstIdx = (new Date(viewYear, viewMonth, 1).getDay() + 6) % 7; // Monday = 0
+      var daysThisMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+      var daysPrevMonth = new Date(viewYear, viewMonth, 0).getDate();
+      var totalCells = Math.ceil((firstIdx + daysThisMonth) / 7) * 7;
+      var todayStr = todayKey();
+
+      // The live end of the span: the confirmed "to" once picked, otherwise
+      // whatever day is currently hovered (falling back to "from" itself,
+      // i.e. a single-day span, until the pointer has moved).
+      var liveTo = selecting ? (hoverDate || from) : to;
+      var rangeStart = '', rangeEnd = '';
+      if(from && liveTo){
+        rangeStart = from < liveTo ? from : liveTo;
+        rangeEnd = from < liveTo ? liveTo : from;
+      }
+
+      var html = '';
+      for(var i = 0; i < totalCells; i++){
+        var dayNum, cellYear = viewYear, cellMonth = viewMonth, outside = false;
+        if(i < firstIdx){
+          dayNum = daysPrevMonth - firstIdx + 1 + i;
+          cellMonth = viewMonth - 1;
+          outside = true;
+        } else if(i >= firstIdx + daysThisMonth){
+          dayNum = i - firstIdx - daysThisMonth + 1;
+          cellMonth = viewMonth + 1;
+          outside = true;
+        } else {
+          dayNum = i - firstIdx + 1;
+        }
+        if(cellMonth < 0){ cellMonth = 11; cellYear -= 1; }
+        if(cellMonth > 11){ cellMonth = 0; cellYear += 1; }
+        var dateStr = keyFor(cellYear, cellMonth, dayNum);
+        var disabled = max && dateStr > max;
+        var classes = 'date-picker-day';
+        if(outside) classes += ' date-picker-day-outside';
+        if(dateStr === todayStr) classes += ' date-picker-day-today';
+        if(rangeStart && dateStr >= rangeStart && dateStr <= rangeEnd){
+          if(rangeStart === rangeEnd) classes += ' range-day-single';
+          else if(dateStr === rangeStart) classes += ' range-day-start';
+          else if(dateStr === rangeEnd) classes += ' range-day-end';
+          else classes += ' range-day-in';
+        }
+        html += '<button type="button" class="' + classes + '" data-date="' + dateStr + '"' + (disabled ? ' disabled' : '') + '>' + dayNum + '</button>';
+      }
+      grid.innerHTML = html;
+      renderSummary();
+    }
+
+    function pick(dateStr){
+      if(!selecting){
+        from = dateStr;
+        to = '';
+        selecting = true;
+        hoverDate = null;
+      } else {
+        if(dateStr < from){ to = from; from = dateStr; } else { to = dateStr; }
+        selecting = false;
+        hoverDate = null;
+        onChange(from, to);
+      }
+      renderGrid();
+    }
+
+    grid.addEventListener('click', function(e){
+      var btn = e.target.closest('.date-picker-day');
+      if(!btn || btn.disabled) return;
+      pick(btn.dataset.date);
+    });
+    grid.addEventListener('mouseover', function(e){
+      if(!selecting) return;
+      var btn = e.target.closest('.date-picker-day');
+      if(!btn || btn.disabled) return;
+      if(hoverDate !== btn.dataset.date){ hoverDate = btn.dataset.date; renderGrid(); }
+    });
+    grid.addEventListener('mouseleave', function(){
+      if(!selecting || !hoverDate) return;
+      hoverDate = null;
+      renderGrid();
+    });
+    prevBtn.addEventListener('click', function(){
+      viewMonth -= 1;
+      if(viewMonth < 0){ viewMonth = 11; viewYear -= 1; }
+      renderGrid();
+    });
+    nextBtn.addEventListener('click', function(){
+      viewMonth += 1;
+      if(viewMonth > 11){ viewMonth = 0; viewYear += 1; }
+      renderGrid();
+    });
+
+    setViewFrom(from);
+    renderGrid();
+
+    return {
+      getFrom: function(){ return from; },
+      getTo: function(){ return to; },
+      setRange: function(f, t){
+        from = f || ''; to = t || ''; selecting = false; hoverDate = null;
+        setViewFrom(from);
+        renderGrid();
+      },
+      setMax: function(v){ max = v || ''; renderGrid(); }
+    };
+  }
+
   // ---------- today's log (browsable by date, editable, deletable) ----------
   function shiftLogView(deltaDays){
     var d = new Date(logViewDate + 'T00:00:00');
@@ -2049,34 +2211,13 @@
     }catch(e){}
   }
 
-  var customRangeFromPicker = createDatePicker(els.customRangeFromPicker, {
-    value: customRangeFrom,
+  var customRangeCalendar = createRangeDatePicker(els.customRangeCalendar, {
+    from: customRangeFrom,
+    to: customRangeTo,
     max: todayKey(),
-    ariaLabel: 'Custom range start',
-    placeholder: 'Start date',
-    onChange: function(v){
-      customRangeFrom = v;
-      // Keep the range sane: "To" can't be before the new "From".
-      if(customRangeTo && customRangeTo < customRangeFrom){
-        customRangeTo = customRangeFrom;
-        customRangeToPicker.setValue(customRangeTo);
-      }
-      saveCustomRange();
-      renderInsights(loadSessions());
-    }
-  });
-
-  var customRangeToPicker = createDatePicker(els.customRangeToPicker, {
-    value: customRangeTo,
-    max: todayKey(),
-    ariaLabel: 'Custom range end',
-    placeholder: 'End date',
-    onChange: function(v){
-      customRangeTo = v;
-      if(customRangeFrom && customRangeTo < customRangeFrom){
-        customRangeFrom = customRangeTo;
-        customRangeFromPicker.setValue(customRangeFrom);
-      }
+    onChange: function(from, to){
+      customRangeFrom = from;
+      customRangeTo = to;
       saveCustomRange();
       renderInsights(loadSessions());
     }
@@ -2138,8 +2279,7 @@
       customRangeTo = savedCustomRange.to || '';
     }
   }catch(e){}
-  customRangeFromPicker.setValue(customRangeFrom);
-  customRangeToPicker.setValue(customRangeTo);
+  customRangeCalendar.setRange(customRangeFrom, customRangeTo);
   els.customRangePicker.hidden = categoryRange !== 'custom';
   (function(){
     var buttons = els.categoryRangeTabs.querySelectorAll('.range-tab-btn');
