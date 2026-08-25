@@ -2193,7 +2193,7 @@
     for(var i=0;i<buttons.length;i++){
       buttons[i].setAttribute('aria-selected', String(buttons[i].dataset.range === range));
     }
-    els.customRangePicker.hidden = range !== 'custom';
+    if(range === 'custom'){ openCustomRangePopover(); } else { closeCustomRangePopover(); }
     try{ localStorage.setItem(STORAGE_CATEGORY_RANGE, range); }catch(e){}
     renderInsights(loadSessions());
   }
@@ -2201,14 +2201,58 @@
   els.categoryRangeTabs.addEventListener('click', function(e){
     var btn = e.target.closest('.range-tab-btn');
     if(!btn) return;
-    setCategoryRange(btn.dataset.range);
+    e.stopPropagation(); // don't let the document-level listener close the popover we may have just opened
+    var range = btn.dataset.range;
+    if(range === 'custom' && categoryRange === 'custom'){
+      // Already on Custom — clicking it again just reopens the popover to
+      // adjust the dates (it auto-closes once a range is confirmed).
+      if(els.customRangePicker.hidden) openCustomRangePopover(); else closeCustomRangePopover();
+      return;
+    }
+    setCategoryRange(range);
   });
 
-  // ---------- Insights custom date range (From / To) ----------
+  // ---------- Insights custom date range popover ----------
+  // Anchored under the tab row instead of the single-picker's own trigger
+  // button, since "Custom" is a tab, not a field with its own affordance.
+  var customRangeHostCard = els.customRangePicker.closest('.card');
+
+  function openCustomRangePopover(){
+    if(openDatePicker && openDatePicker !== customRangePopover) openDatePicker.close();
+    els.customRangePicker.hidden = false;
+    // Lift the Insights card above its siblings — see .card-picker-active.
+    if(customRangeHostCard) customRangeHostCard.classList.add('card-picker-active');
+    openDatePicker = customRangePopover;
+  }
+
+  function closeCustomRangePopover(){
+    els.customRangePicker.hidden = true;
+    if(customRangeHostCard) customRangeHostCard.classList.remove('card-picker-active');
+    if(openDatePicker === customRangePopover) openDatePicker = null;
+  }
+
+  var customRangePopover = { close: closeCustomRangePopover };
+
+  els.customRangePicker.addEventListener('click', function(e){ e.stopPropagation(); });
+
   function saveCustomRange(){
     try{
       localStorage.setItem(STORAGE_CUSTOM_RANGE, JSON.stringify({from: customRangeFrom, to: customRangeTo}));
     }catch(e){}
+  }
+
+  // With the picker tucked away in a popover, the "Custom" tab's own label
+  // is the only place left to see which range is active — show it there
+  // once both ends are picked, e.g. "Aug 3–13" or "Aug 28 – Sep 2".
+  var customTabBtn = els.categoryRangeTabs.querySelector('[data-range="custom"]');
+  function updateCustomTabLabel(){
+    if(!customRangeFrom || !customRangeTo){ customTabBtn.textContent = 'Custom'; return; }
+    var f = new Date(customRangeFrom + 'T00:00:00');
+    var t = new Date(customRangeTo + 'T00:00:00');
+    var sameMonth = f.getFullYear() === t.getFullYear() && f.getMonth() === t.getMonth();
+    customTabBtn.textContent = sameMonth
+      ? MONTH_NAMES[f.getMonth()] + ' ' + f.getDate() + '–' + t.getDate()
+      : MONTH_NAMES[f.getMonth()] + ' ' + f.getDate() + ' – ' + MONTH_NAMES[t.getMonth()] + ' ' + t.getDate();
   }
 
   var customRangeCalendar = createRangeDatePicker(els.customRangeCalendar, {
@@ -2219,7 +2263,9 @@
       customRangeFrom = from;
       customRangeTo = to;
       saveCustomRange();
+      updateCustomTabLabel();
       renderInsights(loadSessions());
+      closeCustomRangePopover();
     }
   });
 
@@ -2280,7 +2326,8 @@
     }
   }catch(e){}
   customRangeCalendar.setRange(customRangeFrom, customRangeTo);
-  els.customRangePicker.hidden = categoryRange !== 'custom';
+  updateCustomTabLabel();
+  els.customRangePicker.hidden = true; // the popover itself never auto-opens on load, even if Custom was last selected
   (function(){
     var buttons = els.categoryRangeTabs.querySelectorAll('.range-tab-btn');
     for(var i=0;i<buttons.length;i++){

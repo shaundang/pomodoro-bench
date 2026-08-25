@@ -134,16 +134,18 @@
       <div class="card insights-card">
         <div class="log-card-header">
           <h2>Insights</h2>
-          <div class="range-tabs" id="categoryRangeTabs" role="tablist" aria-label="Time range">
-            <button type="button" class="range-tab-btn" role="tab" data-range="day">Day</button>
-            <button type="button" class="range-tab-btn" role="tab" data-range="month">Month</button>
-            <button type="button" class="range-tab-btn" role="tab" data-range="year">Year</button>
-            <button type="button" class="range-tab-btn" role="tab" data-range="all" aria-selected="true">All time</button>
-            <button type="button" class="range-tab-btn" role="tab" data-range="custom">Custom</button>
+          <div class="range-tabs-wrap">
+            <div class="range-tabs" id="categoryRangeTabs" role="tablist" aria-label="Time range">
+              <button type="button" class="range-tab-btn" role="tab" data-range="day">Day</button>
+              <button type="button" class="range-tab-btn" role="tab" data-range="month">Month</button>
+              <button type="button" class="range-tab-btn" role="tab" data-range="year">Year</button>
+              <button type="button" class="range-tab-btn" role="tab" data-range="all" aria-selected="true">All time</button>
+              <button type="button" class="range-tab-btn" role="tab" data-range="custom">Custom</button>
+            </div>
+            <div class="custom-range-popover" id="customRangePicker" hidden>
+              <div class="range-picker" id="customRangeCalendar"></div>
+            </div>
           </div>
-        </div>
-        <div class="custom-range-picker" id="customRangePicker" hidden>
-          <div class="range-picker" id="customRangeCalendar"></div>
         </div>
         <div class="insights-grid">
           <div class="insight-panel">
@@ -201,7 +203,7 @@
   </section>
 </div>
 
-<script src="js/app.js?v=10"></script>
+<script src="js/app.js?v=11"></script>
 <script type="module" src="js/sync.js?v=7"></script>
 </body>
 </html>

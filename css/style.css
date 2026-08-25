@@ -967,21 +967,27 @@ button{font-family:inherit;}
   color:var(--ink);
   font-weight:600;
 }
-.custom-range-picker{margin:-0.2rem 0 0.9rem;}
-.custom-range-picker[hidden]{display:none;}
+.range-tabs-wrap{position:relative; display:inline-block;}
 
-/* Inline range calendar for the Insights "Custom" tab: always visible
-   (no trigger button to open it), first click sets the start date, second
-   click sets the end date, and hovering after the first click previews the
-   span with a soft band before it's confirmed. */
-.range-picker{
-  display:inline-block;
-  width:250px;
-  background:var(--paper);
+/* Range calendar popover for the Insights "Custom" tab: opens right below
+   the tab row, anchored to its right edge. First click sets the start
+   date, second click sets the end date, and hovering after the first click
+   previews the span with a soft band before it's confirmed. */
+.custom-range-popover{
+  position:absolute;
+  top:calc(100% + 0.5rem);
+  right:0;
+  z-index:20;
+  background:var(--paper-raised);
   border:1px solid var(--line);
   border-radius:10px;
+  box-shadow:var(--shadow-float);
   padding:0.75rem 0.8rem 0.85rem;
+  transform-origin:top right;
+  animation:dropIn 0.16s ease both;
 }
+.custom-range-popover[hidden]{display:none;}
+.range-picker{display:block; width:250px;}
 .range-picker-summary{
   font-size:0.78rem;
   color:var(--ink-soft);
