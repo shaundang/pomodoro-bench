@@ -53,6 +53,7 @@
     logTitle: document.getElementById('logTitle'),
     logPrevBtn: document.getElementById('logPrevBtn'),
     logNextBtn: document.getElementById('logNextBtn'),
+    logDateInput: document.getElementById('logDateInput'),
     logTodayBtn: document.getElementById('logTodayBtn'),
     logExpandBtn: document.getElementById('logExpandBtn'),
     logCountNote: document.getElementById('logCountNote'),
@@ -65,6 +66,9 @@
     peakHourNote: document.getElementById('peakHourNote'),
     categoryAllList: document.getElementById('categoryAllList'),
     categoryRangeTabs: document.getElementById('categoryRangeTabs'),
+    customRangePicker: document.getElementById('customRangePicker'),
+    customRangeFrom: document.getElementById('customRangeFrom'),
+    customRangeTo: document.getElementById('customRangeTo'),
     resetStatsBtn: document.getElementById('resetStatsBtn'),
     tabTimerBtn: document.getElementById('tabTimerBtn'),
     tabStatsBtn: document.getElementById('tabStatsBtn'),
@@ -110,7 +114,10 @@
   var lastDeleted = null; // {type:'session'|'task', data}
   var undoTimeout = null;
   var STORAGE_CATEGORY_RANGE = 'pomodoroBench.categoryRange.v1';
-  var categoryRange = 'all'; // 'day' | 'month' | 'year' | 'all' — which period the Insights charts show
+  var categoryRange = 'all'; // 'day' | 'month' | 'year' | 'all' | 'custom' — which period the Insights charts show
+  var STORAGE_CUSTOM_RANGE = 'pomodoroBench.customRange.v1';
+  var customRangeFrom = ''; // 'YYYY-MM-DD', only meaningful when categoryRange === 'custom'
+  var customRangeTo = '';
   var heatmapViewYear = new Date().getFullYear(); // which year the heatmap is currently showing
   var STORAGE_LOG_EXPANDED = 'pomodoroBench.logExpanded.v1';
   var logExpanded = false; // whether Today's log is showing its taller, non-scrolling view
@@ -1209,6 +1216,8 @@
     var isToday = logViewDate === todayKey();
     els.logTitle.textContent = isToday ? "Today's log" : formatDateLabel(logViewDate);
     els.logNextBtn.disabled = isToday;
+    els.logDateInput.max = todayKey();
+    els.logDateInput.value = logViewDate;
 
     var entries = sessions.filter(function(s){ return s.date === logViewDate; });
     entries.sort(function(a,b){ return (b.timestamp||0) - (a.timestamp||0); });
@@ -1543,6 +1552,13 @@
       var y = todayKey().slice(0, 4);
       return sessions.filter(function(s){ return s.date.slice(0, 4) === y; });
     }
+    if(range === 'custom'){
+      // An empty bound is unset, so treat it as open-ended on that side
+      // rather than excluding everything.
+      var from = customRangeFrom || '0000-00-00';
+      var to = customRangeTo || '9999-99-99';
+      return sessions.filter(function(s){ return s.date >= from && s.date <= to; });
+    }
     return sessions;
   }
 
@@ -1794,6 +1810,14 @@
   els.logPrevBtn.addEventListener('click', function(){ shiftLogView(-1); });
   els.logNextBtn.addEventListener('click', function(){ shiftLogView(1); });
   els.logTodayBtn.addEventListener('click', jumpLogToToday);
+  els.logDateInput.addEventListener('change', function(){
+    var v = els.logDateInput.value;
+    if(!v) return;
+    var today = todayKey();
+    logViewDate = v > today ? today : v; // no browsing into the future
+    editingLogId = null;
+    refreshStats();
+  });
 
   // ---------- wire up controls ----------
   els.startPauseBtn.addEventListener('click', startPause);
@@ -1842,6 +1866,7 @@
     for(var i=0;i<buttons.length;i++){
       buttons[i].setAttribute('aria-selected', String(buttons[i].dataset.range === range));
     }
+    els.customRangePicker.hidden = range !== 'custom';
     try{ localStorage.setItem(STORAGE_CATEGORY_RANGE, range); }catch(e){}
     renderInsights(loadSessions());
   }
@@ -1850,6 +1875,34 @@
     var btn = e.target.closest('.range-tab-btn');
     if(!btn) return;
     setCategoryRange(btn.dataset.range);
+  });
+
+  // ---------- Insights custom date range (From / To) ----------
+  function saveCustomRange(){
+    try{
+      localStorage.setItem(STORAGE_CUSTOM_RANGE, JSON.stringify({from: customRangeFrom, to: customRangeTo}));
+    }catch(e){}
+  }
+
+  els.customRangeFrom.addEventListener('change', function(){
+    customRangeFrom = els.customRangeFrom.value;
+    // Keep the range sane: "To" can't be before the new "From".
+    if(customRangeTo && customRangeFrom && customRangeTo < customRangeFrom){
+      customRangeTo = customRangeFrom;
+      els.customRangeTo.value = customRangeTo;
+    }
+    saveCustomRange();
+    renderInsights(loadSessions());
+  });
+
+  els.customRangeTo.addEventListener('change', function(){
+    customRangeTo = els.customRangeTo.value;
+    if(customRangeFrom && customRangeTo && customRangeTo < customRangeFrom){
+      customRangeFrom = customRangeTo;
+      els.customRangeFrom.value = customRangeFrom;
+    }
+    saveCustomRange();
+    renderInsights(loadSessions());
   });
 
   // ---------- heatmap year navigation ----------
@@ -1901,6 +1954,18 @@
   try{ savedView = localStorage.getItem(STORAGE_VIEW) || 'timer'; }catch(e){}
   setActiveView(savedView);
   try{ categoryRange = localStorage.getItem(STORAGE_CATEGORY_RANGE) || 'all'; }catch(e){}
+  try{
+    var savedCustomRange = JSON.parse(localStorage.getItem(STORAGE_CUSTOM_RANGE) || 'null');
+    if(savedCustomRange){
+      customRangeFrom = savedCustomRange.from || '';
+      customRangeTo = savedCustomRange.to || '';
+    }
+  }catch(e){}
+  els.customRangeFrom.max = todayKey();
+  els.customRangeTo.max = todayKey();
+  els.customRangeFrom.value = customRangeFrom;
+  els.customRangeTo.value = customRangeTo;
+  els.customRangePicker.hidden = categoryRange !== 'custom';
   (function(){
     var buttons = els.categoryRangeTabs.querySelectorAll('.range-tab-btn');
     for(var i=0;i<buttons.length;i++){
