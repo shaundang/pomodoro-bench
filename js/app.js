@@ -443,7 +443,35 @@
       saveTimerState();
       renderTasks();
       playChime(0.5);
+      requestNotificationPermission();
     }
+  }
+
+  // Ask once, and only in response to the user's own click (browsers refuse
+  // silent/auto permission prompts). Safe to call repeatedly — a no-op once
+  // permission has already been granted or denied.
+  function requestNotificationPermission(){
+    if(!('Notification' in window)) return;
+    if(Notification.permission === 'default'){
+      Notification.requestPermission();
+    }
+  }
+
+  // Desktop popup for phase completion, in addition to the audio chime.
+  // Falls back silently if the API is unavailable or permission was denied.
+  function notifyPhaseEnd(title, body){
+    try{
+      if(!('Notification' in window)) return;
+      if(Notification.permission !== 'granted') return;
+      var n = new Notification(title, {
+        body: body,
+        tag: 'pomodoro-bench-phase'
+      });
+      n.onclick = function(){
+        window.focus();
+        n.close();
+      };
+    }catch(e){ /* notifications unavailable, stay silent */ }
   }
 
   function completePhase(){
@@ -459,11 +487,13 @@
       var goingLong = state.completedInCycle % 4 === 0;
       state.mode = goingLong ? 'longbreak' : 'break';
       showBanner('Focus session done. Nice work — take a break.', 'Start break');
+      notifyPhaseEnd('Focus session done 🍅', 'Nice work — take a break.');
     } else {
       // state.totalMs is this break's own duration (short or long), set when it started.
       logSession(Math.round(state.totalMs / 60000), 'completed', 'break');
       state.mode = 'focus';
       showBanner('Break’s over. Ready when you are.', 'Start focus');
+      notifyPhaseEnd('Break’s over', 'Ready when you are.');
     }
     state.totalMs = phaseMinutes() * 60 * 1000;
     state.remainingMs = state.totalMs;
