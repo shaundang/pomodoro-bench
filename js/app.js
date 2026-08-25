@@ -53,7 +53,7 @@
     logTitle: document.getElementById('logTitle'),
     logPrevBtn: document.getElementById('logPrevBtn'),
     logNextBtn: document.getElementById('logNextBtn'),
-    logDateInput: document.getElementById('logDateInput'),
+    logDatePicker: document.getElementById('logDatePicker'),
     logTodayBtn: document.getElementById('logTodayBtn'),
     logExpandBtn: document.getElementById('logExpandBtn'),
     logCountNote: document.getElementById('logCountNote'),
@@ -67,8 +67,8 @@
     categoryAllList: document.getElementById('categoryAllList'),
     categoryRangeTabs: document.getElementById('categoryRangeTabs'),
     customRangePicker: document.getElementById('customRangePicker'),
-    customRangeFrom: document.getElementById('customRangeFrom'),
-    customRangeTo: document.getElementById('customRangeTo'),
+    customRangeFromPicker: document.getElementById('customRangeFromPicker'),
+    customRangeToPicker: document.getElementById('customRangeToPicker'),
     resetStatsBtn: document.getElementById('resetStatsBtn'),
     tabTimerBtn: document.getElementById('tabTimerBtn'),
     tabStatsBtn: document.getElementById('tabStatsBtn'),
@@ -118,6 +118,7 @@
   var STORAGE_CUSTOM_RANGE = 'pomodoroBench.customRange.v1';
   var customRangeFrom = ''; // 'YYYY-MM-DD', only meaningful when categoryRange === 'custom'
   var customRangeTo = '';
+  var openDatePicker = null; // the one open <calendar popover> instance, so opening another closes it
   var heatmapViewYear = new Date().getFullYear(); // which year the heatmap is currently showing
   var STORAGE_LOG_EXPANDED = 'pomodoroBench.logExpanded.v1';
   var logExpanded = false; // whether Today's log is showing its taller, non-scrolling view
@@ -1189,6 +1190,168 @@
     return h + 'h' + (m > 0 ? ' ' + m + 'm' : '');
   }
 
+  // ---------- custom calendar date picker ----------
+  // Small Google-Calendar-style month popover, used in place of the native
+  // <input type="date"> (which renders inconsistently across browsers/OSes
+  // and can't be styled to match the rest of the app).
+  function createDatePicker(rootEl, opts){
+    opts = opts || {};
+    var value = opts.value || ''; // 'YYYY-MM-DD', '' = no selection
+    var min = opts.min || '';
+    var max = opts.max || '';
+    var onChange = opts.onChange || function(){};
+
+    rootEl.innerHTML =
+      '<button type="button" class="date-picker-trigger" aria-haspopup="dialog" aria-expanded="false">' +
+        '<span class="date-picker-trigger-text"></span>' +
+        '<span class="date-picker-trigger-icon" aria-hidden="true">📅</span>' +
+      '</button>' +
+      '<div class="date-picker-panel" hidden role="dialog" aria-label="' + escapeAttr(opts.ariaLabel || 'Choose date') + '">' +
+        '<div class="date-picker-header">' +
+          '<button type="button" class="icon-btn date-picker-prev" aria-label="Previous month">‹</button>' +
+          '<span class="date-picker-month-label"></span>' +
+          '<button type="button" class="icon-btn date-picker-next" aria-label="Next month">›</button>' +
+        '</div>' +
+        '<div class="date-picker-weekdays">' +
+          ['Mo','Tu','We','Th','Fr','Sa','Su'].map(function(w){ return '<span>' + w + '</span>'; }).join('') +
+        '</div>' +
+        '<div class="date-picker-grid"></div>' +
+        '<button type="button" class="btn-link date-picker-today">Today</button>' +
+      '</div>';
+
+    var trigger = rootEl.querySelector('.date-picker-trigger');
+    var triggerText = rootEl.querySelector('.date-picker-trigger-text');
+    var panel = rootEl.querySelector('.date-picker-panel');
+    var monthLabel = rootEl.querySelector('.date-picker-month-label');
+    var grid = rootEl.querySelector('.date-picker-grid');
+    var prevBtn = rootEl.querySelector('.date-picker-prev');
+    var nextBtn = rootEl.querySelector('.date-picker-next');
+    var todayBtn = rootEl.querySelector('.date-picker-today');
+    var viewYear, viewMonth; // 0-indexed month currently shown in the panel
+
+    function pad2(n){ return n < 10 ? '0' + n : String(n); }
+    function keyFor(y, m, day){ return y + '-' + pad2(m + 1) + '-' + pad2(day); }
+
+    function fmtDisplay(v){
+      if(!v) return opts.placeholder || 'Select date';
+      var d = new Date(v + 'T00:00:00');
+      return MONTH_NAMES[d.getMonth()] + ' ' + d.getDate() + ', ' + d.getFullYear();
+    }
+
+    function setTriggerText(){ triggerText.textContent = fmtDisplay(value); }
+
+    function renderGrid(){
+      monthLabel.textContent = MONTH_NAMES[viewMonth] + ' ' + viewYear;
+      var firstIdx = (new Date(viewYear, viewMonth, 1).getDay() + 6) % 7; // Monday = 0
+      var daysThisMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+      var daysPrevMonth = new Date(viewYear, viewMonth, 0).getDate();
+      var totalCells = Math.ceil((firstIdx + daysThisMonth) / 7) * 7;
+      var todayStr = todayKey();
+      var html = '';
+      for(var i = 0; i < totalCells; i++){
+        var dayNum, cellYear = viewYear, cellMonth = viewMonth, outside = false;
+        if(i < firstIdx){
+          dayNum = daysPrevMonth - firstIdx + 1 + i;
+          cellMonth = viewMonth - 1;
+          outside = true;
+        } else if(i >= firstIdx + daysThisMonth){
+          dayNum = i - firstIdx - daysThisMonth + 1;
+          cellMonth = viewMonth + 1;
+          outside = true;
+        } else {
+          dayNum = i - firstIdx + 1;
+        }
+        if(cellMonth < 0){ cellMonth = 11; cellYear -= 1; }
+        if(cellMonth > 11){ cellMonth = 0; cellYear += 1; }
+        var dateStr = keyFor(cellYear, cellMonth, dayNum);
+        var disabled = (min && dateStr < min) || (max && dateStr > max);
+        var classes = 'date-picker-day';
+        if(outside) classes += ' date-picker-day-outside';
+        if(dateStr === value) classes += ' date-picker-day-selected';
+        if(dateStr === todayStr) classes += ' date-picker-day-today';
+        html += '<button type="button" class="' + classes + '" data-date="' + dateStr + '"' + (disabled ? ' disabled' : '') + '>' + dayNum + '</button>';
+      }
+      grid.innerHTML = html;
+    }
+
+    var hostCard = rootEl.closest('.card');
+
+    function openPanel(){
+      if(openDatePicker && openDatePicker !== api) openDatePicker.close();
+      var base = value || max || todayKey();
+      var d = new Date(base + 'T00:00:00');
+      viewYear = d.getFullYear();
+      viewMonth = d.getMonth();
+      renderGrid();
+      panel.hidden = false;
+      trigger.setAttribute('aria-expanded', 'true');
+      // Lift this popover's card above its siblings — see .card-picker-active.
+      if(hostCard) hostCard.classList.add('card-picker-active');
+      openDatePicker = api;
+    }
+
+    function closePanel(){
+      panel.hidden = true;
+      trigger.setAttribute('aria-expanded', 'false');
+      if(hostCard) hostCard.classList.remove('card-picker-active');
+      if(openDatePicker === api) openDatePicker = null;
+    }
+
+    function pick(dateStr){
+      value = dateStr;
+      setTriggerText();
+      closePanel();
+      onChange(value);
+    }
+
+    trigger.addEventListener('click', function(e){
+      e.stopPropagation();
+      if(panel.hidden) openPanel(); else closePanel();
+    });
+    panel.addEventListener('click', function(e){ e.stopPropagation(); });
+    grid.addEventListener('click', function(e){
+      var btn = e.target.closest('.date-picker-day');
+      if(!btn || btn.disabled) return;
+      pick(btn.dataset.date);
+    });
+    prevBtn.addEventListener('click', function(){
+      viewMonth -= 1;
+      if(viewMonth < 0){ viewMonth = 11; viewYear -= 1; }
+      renderGrid();
+    });
+    nextBtn.addEventListener('click', function(){
+      viewMonth += 1;
+      if(viewMonth > 11){ viewMonth = 0; viewYear += 1; }
+      renderGrid();
+    });
+    todayBtn.addEventListener('click', function(){
+      var t = todayKey();
+      if(max && t > max) t = max;
+      if(min && t < min) t = min;
+      pick(t);
+    });
+
+    var api = {
+      getValue: function(){ return value; },
+      setValue: function(v){ value = v || ''; setTriggerText(); if(!panel.hidden) renderGrid(); },
+      setMax: function(v){ max = v || ''; },
+      setMin: function(v){ min = v || ''; },
+      close: closePanel
+    };
+
+    setTriggerText();
+    return api;
+  }
+
+  // Closes whichever date picker popover is open on any click/Escape that
+  // isn't handled by the picker itself (its own listeners stopPropagation).
+  document.addEventListener('click', function(){
+    if(openDatePicker) openDatePicker.close();
+  });
+  document.addEventListener('keydown', function(e){
+    if(e.key === 'Escape' && openDatePicker) openDatePicker.close();
+  });
+
   // ---------- today's log (browsable by date, editable, deletable) ----------
   function shiftLogView(deltaDays){
     var d = new Date(logViewDate + 'T00:00:00');
@@ -1216,8 +1379,8 @@
     var isToday = logViewDate === todayKey();
     els.logTitle.textContent = isToday ? "Today's log" : formatDateLabel(logViewDate);
     els.logNextBtn.disabled = isToday;
-    els.logDateInput.max = todayKey();
-    els.logDateInput.value = logViewDate;
+    logDatePicker.setMax(todayKey());
+    logDatePicker.setValue(logViewDate);
 
     var entries = sessions.filter(function(s){ return s.date === logViewDate; });
     entries.sort(function(a,b){ return (b.timestamp||0) - (a.timestamp||0); });
@@ -1810,13 +1973,15 @@
   els.logPrevBtn.addEventListener('click', function(){ shiftLogView(-1); });
   els.logNextBtn.addEventListener('click', function(){ shiftLogView(1); });
   els.logTodayBtn.addEventListener('click', jumpLogToToday);
-  els.logDateInput.addEventListener('change', function(){
-    var v = els.logDateInput.value;
-    if(!v) return;
-    var today = todayKey();
-    logViewDate = v > today ? today : v; // no browsing into the future
-    editingLogId = null;
-    refreshStats();
+  var logDatePicker = createDatePicker(els.logDatePicker, {
+    value: logViewDate,
+    max: todayKey(),
+    ariaLabel: 'Jump to date',
+    onChange: function(v){
+      logViewDate = v;
+      editingLogId = null;
+      refreshStats();
+    }
   });
 
   // ---------- wire up controls ----------
@@ -1884,25 +2049,37 @@
     }catch(e){}
   }
 
-  els.customRangeFrom.addEventListener('change', function(){
-    customRangeFrom = els.customRangeFrom.value;
-    // Keep the range sane: "To" can't be before the new "From".
-    if(customRangeTo && customRangeFrom && customRangeTo < customRangeFrom){
-      customRangeTo = customRangeFrom;
-      els.customRangeTo.value = customRangeTo;
+  var customRangeFromPicker = createDatePicker(els.customRangeFromPicker, {
+    value: customRangeFrom,
+    max: todayKey(),
+    ariaLabel: 'Custom range start',
+    placeholder: 'Start date',
+    onChange: function(v){
+      customRangeFrom = v;
+      // Keep the range sane: "To" can't be before the new "From".
+      if(customRangeTo && customRangeTo < customRangeFrom){
+        customRangeTo = customRangeFrom;
+        customRangeToPicker.setValue(customRangeTo);
+      }
+      saveCustomRange();
+      renderInsights(loadSessions());
     }
-    saveCustomRange();
-    renderInsights(loadSessions());
   });
 
-  els.customRangeTo.addEventListener('change', function(){
-    customRangeTo = els.customRangeTo.value;
-    if(customRangeFrom && customRangeTo && customRangeTo < customRangeFrom){
-      customRangeFrom = customRangeTo;
-      els.customRangeFrom.value = customRangeFrom;
+  var customRangeToPicker = createDatePicker(els.customRangeToPicker, {
+    value: customRangeTo,
+    max: todayKey(),
+    ariaLabel: 'Custom range end',
+    placeholder: 'End date',
+    onChange: function(v){
+      customRangeTo = v;
+      if(customRangeFrom && customRangeTo < customRangeFrom){
+        customRangeFrom = customRangeTo;
+        customRangeFromPicker.setValue(customRangeFrom);
+      }
+      saveCustomRange();
+      renderInsights(loadSessions());
     }
-    saveCustomRange();
-    renderInsights(loadSessions());
   });
 
   // ---------- heatmap year navigation ----------
@@ -1961,10 +2138,8 @@
       customRangeTo = savedCustomRange.to || '';
     }
   }catch(e){}
-  els.customRangeFrom.max = todayKey();
-  els.customRangeTo.max = todayKey();
-  els.customRangeFrom.value = customRangeFrom;
-  els.customRangeTo.value = customRangeTo;
+  customRangeFromPicker.setValue(customRangeFrom);
+  customRangeToPicker.setValue(customRangeTo);
   els.customRangePicker.hidden = categoryRange !== 'custom';
   (function(){
     var buttons = els.categoryRangeTabs.querySelectorAll('.range-tab-btn');

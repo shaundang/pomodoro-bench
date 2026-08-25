@@ -117,7 +117,7 @@
           <h2 id="logTitle">Today's log</h2>
           <div class="log-nav">
             <button class="icon-btn" id="logPrevBtn" aria-label="Previous day" title="Previous day">‹</button>
-            <input type="date" class="inline-edit-input log-date-input" id="logDateInput" aria-label="Jump to date">
+            <div class="date-picker" id="logDatePicker"></div>
             <button class="icon-btn" id="logNextBtn" aria-label="Next day" title="Next day">›</button>
             <button class="btn-link" id="logTodayBtn">Today</button>
             <button class="icon-btn" id="logExpandBtn" aria-label="Expand log" title="Expand log" aria-pressed="false">⤢</button>
@@ -143,8 +143,14 @@
           </div>
         </div>
         <div class="custom-range-picker" id="customRangePicker" hidden>
-          <label>From <input type="date" class="inline-edit-input" id="customRangeFrom"></label>
-          <label>To <input type="date" class="inline-edit-input" id="customRangeTo"></label>
+          <div class="date-picker-field">
+            <span class="date-picker-field-label">From</span>
+            <div class="date-picker" id="customRangeFromPicker"></div>
+          </div>
+          <div class="date-picker-field">
+            <span class="date-picker-field-label">To</span>
+            <div class="date-picker" id="customRangeToPicker"></div>
+          </div>
         </div>
         <div class="insights-grid">
           <div class="insight-panel">
@@ -202,7 +208,7 @@
   </section>
 </div>
 
-<script src="js/app.js?v=8"></script>
+<script src="js/app.js?v=9"></script>
 <script type="module" src="js/sync.js?v=7"></script>
 </body>
 </html>
