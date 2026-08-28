@@ -4,6 +4,12 @@
   "private": true,
   "description": "Local-only Pomodoro timer with task notes and stats.",
   "scripts": {
-    "start": "npx serve ."
+    "start": "npx serve .",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0",
+    "vitest": "^3.2.7"
   }
 }
