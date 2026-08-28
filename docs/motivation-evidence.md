@@ -352,12 +352,30 @@ Built 2026-08-28:
 | **Session review** — Scattered / Steady / Deep, no score | Informational feedback, not a reward | Feedback **d=+0.33**; tangible completion rewards **d=−0.36** |
 | **"Days practised · last 28"** replacing the day-streak counter — never resets to zero | Forgiving consistency | Broken streak b=−1.01 vs intact +0.25; one miss is harmless (Lally); GitHub removed streaks |
 | **Comeback note** after a gap ≥2 days, framed as spent not owed; fresh-start wording on a new week/month | Rewarding the return | **Best of 54 arms, +27%** (N=61,293); Dai/Milkman/Riis fresh-start effect |
-| **Hours logged per skill**, with a **user-set marker** and a binary "✓ reached" | Progress monitoring without a shortfall render | Monitoring **d=0.40**; graded shortfall **d=−0.80 to −0.88** vs binary **−0.03** |
+| **Hours logged per skill**, with a per-skill **hour goal** and a bar that fills toward it | Progress monitoring | Monitoring **d=0.40** |
 | **Daily budget bar** turning `--good` at target | A ceiling, not a target | Ericsson 1993 (moderate) |
+
+### Two decisions that went against this file, on purpose
+
+**The bar fills toward the goal.** It was first built sized against the largest skill,
+explicitly to avoid rendering a shortfall. That was over-applying the reward research:
+the **d=−0.80 to −0.88** finding is about a *reward* scaled to how far short you fell
+("you earned 3 of a possible 8"), not about a self-set goal with nothing riding on it.
+Progress monitoring (**d=0.40**) is the better-evidenced mechanism and it argues for
+showing the progress. The original design also made length and colour mean two different
+things: the biggest skill sat permanently full while the colour still flipped on reaching
+the goal, so changing that goal appeared to do nothing.
+
+**The default goal is 10,000 hours**, set by the project owner. This file documents at
+length why no hours-to-expert threshold is defensible, and a default is the app
+*suggesting* a number rather than the user choosing one — so this is a deliberate
+departure, recorded here rather than quietly contradicted. The number is one constant,
+`DEFAULT_SKILL_GOAL_HOURS` in `js/app.js`. Practical note: at 10,000 h the bar shows 1%
+for anything under about 100 hours, so it reads as static for a long time.
 
 Deliberately **not** built:
 
-- Any "% toward expert" or hours-to-mastery milestone — no domain supports it
+- Any label claiming a number of hours makes you an expert — no domain supports it
 - Points, coins, badges (**d=−0.36**), or any graded "3 of 8" shortfall (**d≈−0.85**)
 - Variable/random rewards — no supporting evidence; nearest evidence base is harm research
 - Leaderboards or social/community features — actively contraindicated (see above)

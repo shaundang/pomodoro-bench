@@ -27,6 +27,8 @@
   var STORAGE_TIMER = 'pomodoroBench.timer.v1';
   var STORAGE_PRESETS = 'pomodoroBench.customPresets.v1';
   var STORAGE_SKILL_MARKS = 'pomodoroBench.skillMarks.v1';
+  // Applied to any skill with no goal of its own. One number to change here.
+  var DEFAULT_SKILL_GOAL_HOURS = 10000;
   var DEFAULT_CATEGORIES = ['Learning', 'Work', 'Personal'];
 
   var els = {
@@ -1442,14 +1444,25 @@
       return;
     }
 
-    // Bar length is relative to the biggest skill, never to the marker: a bar
-    // that fills toward a target renders how far short you fell, which is the
-    // most demotivating shape a progress display can take. Against your own
-    // largest total it is just a size comparison, like the category donut.
-    var top = rows[0].minutes || 1;
-
+    // The bar fills toward the row's own goal. It used to be sized against
+    // the largest skill, which meant the biggest one was permanently full and
+    // changing its goal did nothing — while the colour still flipped on
+    // reaching the goal, so length and colour meant two different things.
+    // Avoiding a goal-shaped bar was over-applying the reward research: the
+    // demotivating pattern there is a *reward* scaled to how far short you
+    // fell, not a self-set goal with nothing riding on it. Plain progress
+    // monitoring is the best-evidenced mechanism in that whole review.
     rows.forEach(function(r){
-      var reached = r.mark && (r.minutes / 60) >= r.mark;
+      // A skill with no goal of its own falls back to the default, shown
+      // faint so it reads as a suggestion rather than something you chose.
+      var usingDefault = !r.mark;
+      var goal = r.mark || DEFAULT_SKILL_GOAL_HOURS;
+      var reached = (r.minutes / 60) >= goal;
+      var pct = r.minutes > 0
+        ? Math.min(100, Math.max(1, Math.round((r.minutes / 60 / goal) * 100)))
+        : 0;
+      var barTitle = formatDuration(r.minutes) + ' of a ' + goal + 'h goal' +
+        (usingDefault ? ' (default)' : '');
       var li = document.createElement('li');
       // Reuses the category-legend row: same pill-inside-.cat-name structure,
       // same bar, same mono figures, so this card reads as part of the app.
@@ -1460,11 +1473,11 @@
       // number being aimed at.
       var markCell = r.name === editingSkillName
         ? '<input type="number" class="inline-edit-input skill-mark-input" min="1" max="50000" ' +
-            'value="' + (r.mark || '') + '" placeholder="h" ' +
+            'value="' + goal + '" placeholder="h" ' +
             'aria-label="Hour goal for ' + escapeAttr(r.name) + '">'
-        : '<button type="button" class="skill-mark-btn' + (r.mark ? '' : ' skill-mark-empty') + '" ' +
-            'title="' + (r.mark ? 'Change your hour goal' : 'Set your own hour goal') + '">' +
-            (r.mark ? 'goal ' + r.mark + 'h' + (reached ? ' ✓' : '') : '+ goal') +
+        : '<button type="button" class="skill-mark-btn' + (usingDefault ? ' skill-mark-empty' : '') + '" ' +
+            'title="' + (usingDefault ? 'Default goal — click to set your own' : 'Change your hour goal') + '">' +
+            'goal ' + goal + 'h' + (reached ? ' ✓' : '') +
           '</button>';
 
       li.innerHTML =
@@ -1472,8 +1485,8 @@
         '<span class="cat-name"><span class="cat-pill ' + categoryColorClass(r.name) + '" title="' + escapeAttr(r.name) + '">' + escapeHtml(r.name) + '</span></span>' +
         // div, not span: width and height do not apply to inline elements, so
         // a span fill renders as a zero-size box and only the track shows.
-        '<div class="cat-bar-track"><div class="cat-bar-fill ' + categoryColorClass(r.name) + (reached ? ' cat-bar-reached' : '') + '" style="width:' +
-          Math.max(2, Math.round((r.minutes / top) * 100)) + '%"></div></div>' +
+        '<div class="cat-bar-track" title="' + escapeAttr(barTitle) + '"><div class="cat-bar-fill ' + categoryColorClass(r.name) + (reached ? ' cat-bar-reached' : '') + '" style="width:' +
+          pct + '%"></div></div>' +
         '<span class="cat-minutes">' + formatDuration(r.minutes) + '</span>' +
         '<span class="skill-mark-cell">' + markCell + '</span>';
 

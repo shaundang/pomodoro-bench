@@ -768,11 +768,13 @@ button{font-family:inherit;}
   white-space:nowrap;
   vertical-align:middle;
 }
-.skill-mark-cell{flex:0 0 6rem; text-align:right;}
+/* Wide enough for the longest label the default produces, "goal 10000h ✓" —
+   the button is nowrap, so a short column overflows rather than wrapping. */
+.skill-mark-cell{flex:0 0 7.5rem; text-align:right;}
 @media (max-width:680px){
   .skill-row .cat-name{flex:0 0 6.5rem;}
   .skill-row .cat-minutes{flex:0 0 4.5rem;}
-  .skill-mark-cell{flex:0 0 5rem;}
+  .skill-mark-cell{flex:0 0 6.5rem;}
 }
 .skill-mark-btn{
   border:1px solid transparent;
