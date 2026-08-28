@@ -36,11 +36,24 @@
   </nav>
 
   <section class="view view-timer" id="viewTimer" role="tabpanel" aria-labelledby="tabTimerBtn">
+    <p class="comeback" id="comeback" hidden></p>
     <div class="card timer-block">
       <div class="timer-col col-presets">
         <h2>Session length</h2>
         <div class="preset-grid" id="presetGrid" role="list"></div>
         <p class="preset-note" id="presetNote"></p>
+        <button type="button" class="btn btn-sm preset-add-btn" id="presetAddBtn">+ New session type</button>
+        <div class="preset-add-form" id="presetAddForm" hidden>
+          <input type="text" class="inline-edit-input" id="presetNewName" placeholder="Name, e.g. Language drills" maxlength="40">
+          <div class="preset-add-row">
+            <label class="duration-field">Focus <input type="number" id="presetNewWork" min="1" max="180" value="30"> min</label>
+            <label class="duration-field">Break <input type="number" id="presetNewBreak" min="1" max="60" value="6"> min</label>
+          </div>
+          <div class="edit-actions">
+            <button type="button" class="btn btn-sm" id="presetCancelBtn">Cancel</button>
+            <button type="button" class="btn btn-primary btn-sm" id="presetSaveBtn">Save</button>
+          </div>
+        </div>
       </div>
 
       <div class="timer-col col-focus">
@@ -66,6 +79,19 @@
           <label class="duration-field">Focus <input type="number" id="workInput" min="1" max="180" value="25"> min</label>
           <label class="duration-field">Break <input type="number" id="breakInput" min="1" max="60" value="5"> min</label>
         </div>
+        <label class="scale-break-field">
+          <input type="checkbox" id="scaleBreakInput">
+          <span>Scale break to time actually focused</span>
+        </label>
+        <p class="empty-note" id="scaleBreakNote"></p>
+        <div class="budget">
+          <div class="budget-head">
+            <span class="budget-label" id="budgetLabel"></span>
+            <label class="duration-field">Target <input type="number" id="budgetTargetInput" min="30" max="720" step="30" value="240"> min</label>
+          </div>
+          <div class="budget-bar"><div class="budget-fill" id="budgetFill"></div></div>
+          <p class="empty-note" id="budgetNote"></p>
+        </div>
       </div>
 
       <div class="timer-col col-tasks">
@@ -89,6 +115,14 @@
       <span id="bannerText"></span>
       <button class="btn" id="bannerAction">Start break</button>
     </div>
+
+    <div class="card intent-card" id="intentCard" hidden>
+      <h2 id="intentTitle">Before you start</h2>
+      <p class="empty-note" id="intentPrompt"></p>
+      <input type="text" class="inline-edit-input" id="intentInput" maxlength="120" placeholder="…I will (optional)">
+      <div class="intent-actions" id="intentActions"></div>
+      <p class="empty-note" id="intentFoot"></p>
+    </div>
   </section>
 
   <section class="view view-stats" id="viewStats" role="tabpanel" aria-labelledby="tabStatsBtn" hidden>
@@ -101,8 +135,8 @@
       </div>
       <div class="tile">
         <span class="tile-value" id="streakDays">0</span>
-        <span class="tile-label">Day streak</span>
-        <span class="tile-sub" id="bestStreak">Best 0</span>
+        <span class="tile-label">Days practised · last 28</span>
+        <span class="tile-sub" id="bestStreak">—</span>
       </div>
       <div class="tile">
         <span class="tile-value" id="allTimeTotal">0h</span>
@@ -168,6 +202,14 @@
             <p class="insight-note" id="peakHourNote"></p>
           </div>
         </div>
+      </div>
+
+      <div class="card skills-card">
+        <div class="log-card-header">
+          <h2>Hours logged per skill</h2>
+        </div>
+        <p class="empty-note skills-intro">A record of the hours you've put in — not a measure of how good you are. Set a marker if aiming at a number helps.</p>
+        <ul class="cat-list skills-list" id="skillsList"></ul>
       </div>
 
       <div class="card heatmap-card">

@@ -3,7 +3,7 @@
 // up window.PomodoroBench.
 //
 // Model: one Firestore document per signed-in user at /syncs/{uid}, holding
-// the same {sessions, tasks, categories} shape as the local export/import
+// the same {sessions, tasks, categories, presets} shape as the export/import
 // backup. Security rules restrict each doc to only the matching
 // request.auth.uid (see firestore.rules) — no shared secret involved.
 //
@@ -60,8 +60,10 @@ function fingerprint(data){
   // Cheap change-detector: no crypto needed, just enough to skip redundant
   // writes when nothing changed since the last push.
   return JSON.stringify([data.sessions.length, data.tasks.length, data.categories.length,
+    (data.presets || []).length,
     data.sessions.map(function(s){return s.id;}).join(','),
-    data.tasks.map(function(t){return t.id + ':' + t.done + ':' + t.completed;}).join(',')]);
+    data.tasks.map(function(t){return t.id + ':' + t.done + ':' + t.completed;}).join(','),
+    (data.presets || []).map(function(p){return p.id;}).join(',')]);
 }
 
 function pushLocalSnapshot(){
@@ -74,6 +76,7 @@ function pushLocalSnapshot(){
     sessions: data.sessions,
     tasks: data.tasks,
     categories: data.categories,
+    presets: data.presets,
     updatedAt: serverTimestamp()
   }).then(function(){
     setStatus('Signed in as ' + auth.currentUser.email + ' — synced ' + new Date().toLocaleTimeString());

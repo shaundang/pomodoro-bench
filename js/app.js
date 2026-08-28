@@ -1,13 +1,23 @@
 (function(){
   "use strict";
 
+  // No study compares session lengths across activity types, so these
+  // numbers are reasoned from mechanism (switching cost, recovery time,
+  // batching) rather than measured — they are a sane starting point to
+  // calibrate away from, not an optimum. What the evidence does support:
+  // break length should scale with the work that preceded it, so every
+  // pair here keeps at least a 1:5 work-to-break ratio.
+  //
+  // Before changing any number here, read docs/session-length-evidence.md —
+  // it records what is actually supported, which widely-repeated figures
+  // trace to no study, and why each of these values is what it is.
   var PRESETS = [
-    {id:'deep', label:'Deep work / coding', work:50, brk:10, note:'Long enough to reach flow, short enough to avoid burnout.'},
-    {id:'writing', label:'Writing', work:45, brk:15, note:'Sustained focus with a longer reset before the next pass.'},
-    {id:'study', label:'Study & practice', work:25, brk:5, note:'The classic split — matches a typical attention span for review and drills.'},
-    {id:'reading', label:'Reading', work:30, brk:5, note:'Enough to finish a chapter or paper section before pausing.'},
-    {id:'admin', label:'Admin & email', work:15, brk:3, note:'Short bursts suited to shallow, high-switching tasks.'},
-    {id:'planning', label:'Planning & meetings', work:20, brk:5, note:'Short enough to stay sharp while scoping the next step.'},
+    {id:'deep', label:'Deep work / coding', work:50, brk:10, note:'Long blocks earn their keep by avoiding task-switching cost — not by "reaching flow".'},
+    {id:'writing', label:'Writing', work:45, brk:15, note:'A generous 1:3 reset. Writing a little every day beats occasional marathons.'},
+    {id:'study', label:'Study & practice', work:25, brk:5, note:'Returning on later days matters more than block length — spacing is the well-evidenced part.'},
+    {id:'reading', label:'Reading', work:30, brk:8, note:'Five minutes was too short a reset for a 30-minute block; this holds the 1:5 floor.'},
+    {id:'admin', label:'Admin & email', work:25, brk:5, note:'Batched on purpose — fewer email checks a day lowers stress; short bursts invite switching.'},
+    {id:'planning', label:'Planning & meetings', work:30, brk:10, note:'The one kind of work where breaks measurably improve the output. Ideally take it as a walk.'},
     {id:'custom', label:'Custom', work:25, brk:5, note:'Set your own lengths below.'}
   ];
 
@@ -15,11 +25,20 @@
   var STORAGE_TASKS = 'pomodoroBench.tasks.v1';
   var STORAGE_CATEGORIES = 'pomodoroBench.categories.v1';
   var STORAGE_TIMER = 'pomodoroBench.timer.v1';
+  var STORAGE_PRESETS = 'pomodoroBench.customPresets.v1';
+  var STORAGE_SKILL_MARKS = 'pomodoroBench.skillMarks.v1';
   var DEFAULT_CATEGORIES = ['Learning', 'Work', 'Personal'];
 
   var els = {
     presetGrid: document.getElementById('presetGrid'),
     presetNote: document.getElementById('presetNote'),
+    presetAddBtn: document.getElementById('presetAddBtn'),
+    presetAddForm: document.getElementById('presetAddForm'),
+    presetNewName: document.getElementById('presetNewName'),
+    presetNewWork: document.getElementById('presetNewWork'),
+    presetNewBreak: document.getElementById('presetNewBreak'),
+    presetCancelBtn: document.getElementById('presetCancelBtn'),
+    presetSaveBtn: document.getElementById('presetSaveBtn'),
     taskForm: document.getElementById('taskForm'),
     newTaskName: document.getElementById('newTaskName'),
     newTaskCategory: document.getElementById('newTaskCategory'),
@@ -40,6 +59,20 @@
     resetBtn: document.getElementById('resetBtn'),
     skipBtn: document.getElementById('skipBtn'),
     noTaskHint: document.getElementById('noTaskHint'),
+    comeback: document.getElementById('comeback'),
+    intentCard: document.getElementById('intentCard'),
+    intentTitle: document.getElementById('intentTitle'),
+    intentPrompt: document.getElementById('intentPrompt'),
+    intentInput: document.getElementById('intentInput'),
+    intentActions: document.getElementById('intentActions'),
+    intentFoot: document.getElementById('intentFoot'),
+    skillsList: document.getElementById('skillsList'),
+    scaleBreakInput: document.getElementById('scaleBreakInput'),
+    scaleBreakNote: document.getElementById('scaleBreakNote'),
+    budgetLabel: document.getElementById('budgetLabel'),
+    budgetTargetInput: document.getElementById('budgetTargetInput'),
+    budgetFill: document.getElementById('budgetFill'),
+    budgetNote: document.getElementById('budgetNote'),
     banner: document.getElementById('banner'),
     bannerText: document.getElementById('bannerText'),
     bannerAction: document.getElementById('bannerAction'),
@@ -101,7 +134,18 @@
     completedInCycle: 0,
     activeTaskId: null,
     activeTaskName: '',
-    activeTaskCategory: ''
+    activeTaskCategory: '',
+    proportionalBreak: false,
+    // One if-then intention per day, stamped with the day it belongs to so it
+    // expires on its own rather than lingering into tomorrow.
+    dayIntention: '',
+    dayIntentionDate: null,
+    // Minutes of focused work targeted per day. Four hours is where the
+    // deliberate-practice evidence puts the point of diminishing returns.
+    dailyBudgetMin: 240,
+    // Minutes actually focused in the phase just finished — the basis for a
+    // scaled break. Null until a focus phase has ended at least once.
+    lastFocusMin: null
   };
 
   // UI-only state, not persisted
@@ -154,30 +198,117 @@
   }
 
   // ---------- session-length presets ----------
-  // Each session-length preset gets its own light color (fixed by position in
-  // PRESETS, not hashed) so the same preset always reads as the same color
-  // both here and on the task card's session chip.
+  // The seven built-ins above are fixed; anything the user adds lives in its
+  // own storage key and is appended to them. Every read of the preset list
+  // goes through allPresets() so a custom type behaves like a built-in
+  // everywhere — the timer, the task cards, the task-edit dropdown.
+  function loadCustomPresets(){
+    try{
+      var raw = localStorage.getItem(STORAGE_PRESETS);
+      var arr = raw ? JSON.parse(raw) : [];
+      if(!Array.isArray(arr)) arr = [];
+      return arr.filter(function(p){
+        return p && p.id && p.label && typeof p.work === 'number' && typeof p.brk === 'number';
+      });
+    }catch(e){ return []; }
+  }
+
+  function saveCustomPresets(arr){
+    try{ localStorage.setItem(STORAGE_PRESETS, JSON.stringify(arr)); }catch(e){ /* ignore */ }
+  }
+
+  function allPresets(){
+    return PRESETS.concat(loadCustomPresets());
+  }
+
+  function findPreset(id){
+    return allPresets().filter(function(p){ return p.id === id; })[0];
+  }
+
+  // Built-ins keep a colour fixed by position, so they never shift when the
+  // user adds a type. Custom ones hash into the same seven-colour pool —
+  // collisions with a built-in are possible and harmless, since there are
+  // only seven session colours defined in CSS.
   function presetColorClass(id){
     var idx = PRESETS.map(function(p){ return p.id; }).indexOf(id);
-    if(idx < 0) idx = PRESETS.length - 1;
-    return 'session-color-' + (idx % 7);
+    if(idx >= 0) return 'session-color-' + (idx % 7);
+    var hash = 0;
+    for(var i=0;i<id.length;i++){ hash = (hash + id.charCodeAt(i)) % 7; }
+    return 'session-color-' + hash;
   }
 
   function renderPresets(){
     els.presetGrid.innerHTML = '';
-    PRESETS.forEach(function(p){
+    var builtInIds = PRESETS.map(function(p){ return p.id; });
+    allPresets().forEach(function(p){
       var btn = document.createElement('button');
       btn.className = 'preset-btn';
       btn.type = 'button';
       btn.setAttribute('role','listitem');
       btn.setAttribute('aria-pressed', String(p.id === state.presetId));
-      btn.innerHTML = '<span class="p-name"><span class="preset-dot ' + presetColorClass(p.id) + '" aria-hidden="true"></span>' + p.label + '</span>' +
+      btn.innerHTML = '<span class="p-name"><span class="preset-dot ' + presetColorClass(p.id) + '" aria-hidden="true"></span>' + escapeHtml(p.label) + '</span>' +
         '<span class="p-len">' + p.work + ' / ' + p.brk + ' min</span>';
       btn.addEventListener('click', function(){ applyPreset(p.id); });
-      els.presetGrid.appendChild(btn);
+
+      if(builtInIds.indexOf(p.id) >= 0){
+        els.presetGrid.appendChild(btn);
+        return;
+      }
+      // A delete control cannot sit inside the preset button (nested buttons
+      // are invalid), so custom rows wrap the pair side by side.
+      var row = document.createElement('div');
+      row.className = 'preset-row';
+      var del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'icon-btn preset-del';
+      del.textContent = '✕';
+      del.title = 'Delete "' + p.label + '"';
+      del.setAttribute('aria-label', del.title);
+      del.addEventListener('click', function(){ deleteCustomPreset(p.id); });
+      row.appendChild(btn);
+      row.appendChild(del);
+      els.presetGrid.appendChild(row);
     });
-    var current = PRESETS.filter(function(p){return p.id === state.presetId;})[0];
-    els.presetNote.textContent = current ? current.note : '';
+    var current = findPreset(state.presetId);
+    els.presetNote.textContent = current ? (current.note || '') : '';
+  }
+
+  function addCustomPreset(label, work, brk){
+    var name = (label || '').trim();
+    if(!name) return;
+    var arr = loadCustomPresets();
+    arr.push({
+      id: generateId(),
+      label: name,
+      work: Math.max(1, Math.min(180, work || 30)),
+      brk: Math.max(1, Math.min(60, brk || 6)),
+      note: 'Your own session type.'
+    });
+    saveCustomPresets(arr);
+    renderPresets();
+  }
+
+  // Tasks store their own workMin/breakMin, so pointing a stranded task at
+  // the built-in 'custom' keeps its actual timings intact — only the label
+  // it displays changes.
+  function deleteCustomPreset(id){
+    var arr = loadCustomPresets().filter(function(p){ return p.id !== id; });
+    saveCustomPresets(arr);
+
+    var tasks = loadTasks();
+    var touched = false;
+    tasks.forEach(function(t){
+      if(t.sessionPresetId === id){ t.sessionPresetId = 'custom'; touched = true; }
+    });
+    if(touched) saveTasks(tasks);
+
+    if(state.presetId === id){
+      state.presetId = 'custom';
+      saveTimerState();
+    }
+    renderPresets();
+    renderTasks();
+    renderTimer();
   }
 
   // ---------- categories ----------
@@ -296,7 +427,7 @@
   }
 
   function applyPreset(id){
-    var p = PRESETS.filter(function(x){return x.id === id;})[0];
+    var p = findPreset(id);
     if(!p) return;
     state.presetId = id;
     state.workMin = p.work;
@@ -312,13 +443,13 @@
   }
 
   function presetLabelFor(id){
-    var p = PRESETS.filter(function(x){return x.id === id;})[0];
+    var p = findPreset(id);
     return p ? p.label : 'Custom';
   }
 
   function fillPresetSelect(selectEl, currentId){
     selectEl.innerHTML = '';
-    PRESETS.forEach(function(p){
+    allPresets().forEach(function(p){
       var opt = document.createElement('option');
       opt.value = p.id;
       opt.textContent = p.label + ' (' + p.work + '/' + p.brk + ')';
@@ -343,9 +474,25 @@
   }
 
   // ---------- timer core ----------
+  // The preset's own work/break pair already expresses a ratio (deep is
+  // 1:5, writing 1:3), so scaling a break needs no extra setting — it just
+  // applies that same ratio to the time actually focused. Cut a 50-minute
+  // block short at 10 minutes and the break follows it down to 2, instead
+  // of handing out the full 10 for a fifth of the work.
+  function breakRatio(){
+    return state.workMin > 0 ? (state.breakMin / state.workMin) : 0.2;
+  }
+
+  function proportionalBreakMinutes(focusedMin){
+    return Math.max(1, Math.round(focusedMin * breakRatio()));
+  }
+
   function phaseMinutes(){
     if(state.mode === 'focus') return state.workMin;
-    if(state.mode === 'longbreak') return Math.max(15, state.breakMin * 3);
+    if(state.mode === 'longbreak') return Math.max(20, state.breakMin * 3);
+    if(state.proportionalBreak && typeof state.lastFocusMin === 'number'){
+      return proportionalBreakMinutes(state.lastFocusMin);
+    }
     return state.breakMin;
   }
 
@@ -389,9 +536,49 @@
 
     renderDots();
     updateStartAvailability();
+    renderScaleBreak();
 
     var titleTask = state.mode === 'focus' && state.activeTaskName ? state.activeTaskName + ' · ' : '';
     document.title = (state.running ? formatTime(state.remainingMs) + ' · ' + titleTask : '') + 'Pomodoro Bench';
+  }
+
+  // Spells out the ratio in the user's own numbers, so the effect is legible
+  // before a break ever starts — and greys the fixed Break box when the
+  // scaled value is what will actually be used.
+  function renderScaleBreak(){
+    if(!els.scaleBreakInput) return;
+    els.scaleBreakInput.checked = !!state.proportionalBreak;
+    els.breakInput.classList.toggle('duration-input-derived', !!state.proportionalBreak);
+    if(!state.proportionalBreak){
+      els.scaleBreakNote.textContent = '';
+      return;
+    }
+    var ratio = breakRatio();
+    var oneIn = ratio > 0 ? Math.round(1 / ratio) : 0;
+    var parts = ['1:' + oneIn + ' of focused time'];
+    if(typeof state.lastFocusMin === 'number'){
+      parts.push('last session ' + state.lastFocusMin + ' min → ' + proportionalBreakMinutes(state.lastFocusMin) + ' min break');
+    }
+    els.scaleBreakNote.textContent = parts.join(' · ');
+  }
+
+  // Today's logged focus minutes against the daily target. Held in a module
+  // var because refreshStats() is what computes it, while the target input
+  // can re-render the bar on its own without recounting sessions.
+  var lastTodayFocusMin = 0;
+
+  function renderBudget(todayMin){
+    if(!els.budgetFill) return;
+    if(typeof todayMin === 'number') lastTodayFocusMin = todayMin;
+    var target = state.dailyBudgetMin || 240;
+    var pct = Math.min(100, Math.round((lastTodayFocusMin / target) * 100));
+    els.budgetTargetInput.value = target;
+    els.budgetFill.style.width = pct + '%';
+    els.budgetFill.classList.toggle('budget-fill-full', lastTodayFocusMin >= target);
+    els.budgetLabel.textContent = formatDuration(lastTodayFocusMin) + ' / ' + formatDuration(target) + ' focused today';
+    els.budgetNote.textContent = lastTodayFocusMin >= target
+      ? 'At your daily budget — past roughly four hours, more focused work buys little.'
+      : '';
   }
 
   function updateStartAvailability(){
@@ -431,8 +618,99 @@
     renderTimer();
   }
 
+  // ---------- session intention & review ----------
+  // The only pair of features that moves this app from what the expertise
+  // literature calls "naive practice" (merely putting in time) toward
+  // "purposeful practice" (a specific improvement goal plus feedback on how
+  // it went). A timer can never reach "deliberate practice" — that needs a
+  // qualified teacher giving immediate feedback — so this is the honest
+  // ceiling. See docs/motivation-evidence.md.
+  var pendingReviewSessionId = null;
+
+  function needsDayIntention(){
+    return state.dayIntentionDate !== todayKey();
+  }
+
+  function renderIntentActions(actions){
+    els.intentActions.innerHTML = '';
+    actions.forEach(function(a){
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn-sm' + (a.primary ? ' btn-primary' : '');
+      btn.textContent = a.label;
+      btn.addEventListener('click', a.onClick);
+      els.intentActions.appendChild(btn);
+    });
+  }
+
+  function closeIntentCard(){
+    els.intentCard.hidden = true;
+    pendingReviewSessionId = null;
+  }
+
+  function openIntentionPrompt(){
+    els.intentTitle.textContent = 'Before your first session today';
+    els.intentPrompt.textContent = 'Finish this out loud, in one sentence: "When I sit down, I will …". Saying it over to yourself is the part that works — the field evidence finds if-then phrasing and rehearsal help, while writing it down slightly weakens the effect. So the box is optional.';
+    els.intentInput.hidden = false;
+    els.intentInput.value = state.dayIntention || '';
+    els.intentFoot.textContent = 'Asked once a day, not once a session.';
+    renderIntentActions([
+      {label:'Start focus', primary:true, onClick: function(){ commitIntention(true); }},
+      {label:'Skip', onClick: function(){ commitIntention(false); }}
+    ]);
+    els.intentCard.hidden = false;
+    els.intentInput.focus();
+  }
+
+  function commitIntention(keepText){
+    state.dayIntention = keepText ? els.intentInput.value.trim() : '';
+    state.dayIntentionDate = todayKey();
+    saveTimerState();
+    closeIntentCard();
+    startPause(); // needsDayIntention() is now false, so this starts the timer
+  }
+
+  // Informational feedback raises intrinsic motivation; tangible rewards for
+  // finishing lower it. So this asks how the session went and says nothing
+  // about whether that was good enough — no score, no target to fall short of.
+  function openSessionReview(sessionId){
+    pendingReviewSessionId = sessionId;
+    els.intentTitle.textContent = 'How did that session go?';
+    els.intentPrompt.textContent = state.dayIntention
+      ? 'Today’s intention: "' + state.dayIntention + '"'
+      : 'One tap, for your own record.';
+    els.intentInput.hidden = true;
+    els.intentFoot.textContent = 'Shows up in the log so you can see which sessions actually landed.';
+    renderIntentActions([
+      {label:'Scattered', onClick: function(){ commitReview('scattered'); }},
+      {label:'Steady', onClick: function(){ commitReview('steady'); }},
+      {label:'Deep', primary:true, onClick: function(){ commitReview('deep'); }},
+      {label:'Dismiss', onClick: closeIntentCard}
+    ]);
+    els.intentCard.hidden = false;
+  }
+
+  function commitReview(quality){
+    var id = pendingReviewSessionId;
+    if(id){
+      var sessions = loadSessions();
+      var s = sessions.filter(function(x){ return x.id === id; })[0];
+      if(s){ s.quality = quality; saveSessions(sessions); }
+    }
+    closeIntentCard();
+    refreshStats();
+  }
+
   function startPause(){
     if(state.mode === 'focus' && !state.activeTaskId && !state.running) return;
+    // Gate only the first focus session of the day, not every one: the
+    // implementation-intention evidence finds one or two plans outperform
+    // three to five, and a prompt on every start is friction that gets the
+    // whole tool abandoned. Returns here and re-enters via the card's button.
+    if(!state.running && state.mode === 'focus' && needsDayIntention()){
+      openIntentionPrompt();
+      return;
+    }
     if(state.running){
       // pause
       state.running = false;
@@ -488,8 +766,9 @@
     playChime(1);
 
     if(state.mode === 'focus'){
-      logSession(state.workMin, 'completed', 'focus');
+      var loggedId = logSession(state.workMin, 'completed', 'focus');
       incrementTaskCompleted(state.activeTaskId);
+      state.lastFocusMin = state.workMin; // ran to term, so the full length
       state.completedInCycle += 1;
       var goingLong = state.completedInCycle % 4 === 0;
       state.mode = goingLong ? 'longbreak' : 'break';
@@ -507,6 +786,8 @@
     renderTimer();
     saveTimerState();
     refreshStats();
+    // After refreshStats(), which re-renders the log the rating will land in.
+    if(loggedId) openSessionReview(loggedId);
   }
 
   function showBanner(text, actionLabel){
@@ -574,6 +855,9 @@
       // completion (e.g. skip → long break → skip that too → finish the
       // next focus session and it's long break again instead of short).
       state.completedInCycle += 1;
+      // Only what was actually focused, so a scaled break shrinks to match
+      // a session cut short rather than paying out the full rest.
+      state.lastFocusMin = elapsedMin;
       var goingLong = state.completedInCycle % 4 === 0;
       state.mode = goingLong ? 'longbreak' : 'break';
     } else {
@@ -646,7 +930,10 @@
     state.activeTaskId = t.id;
     state.activeTaskName = t.name;
     state.activeTaskCategory = t.category;
-    state.presetId = t.sessionPresetId;
+    // A task can point at a custom type this device no longer has — deleted
+    // here, or never synced in. Fall back to 'custom' so the preset grid
+    // still shows a selection; the task's own workMin/breakMin still apply.
+    state.presetId = findPreset(t.sessionPresetId) ? t.sessionPresetId : 'custom';
     state.workMin = t.workMin;
     state.breakMin = t.breakMin;
     els.workInput.value = t.workMin;
@@ -720,7 +1007,7 @@
     t.category = catInput.value.trim() || 'Uncategorized';
     t.estimate = Math.max(1, Math.min(20, parseInt(estInput.value, 10) || t.estimate));
 
-    var chosenPreset = PRESETS.filter(function(p){ return p.id === sessionInput.value; })[0];
+    var chosenPreset = findPreset(sessionInput.value);
     // Only a genuine session-length change should touch the running/paused
     // phase — editing the name, category or notes on the active task must
     // never wipe out time already spent on a paused session.
@@ -1024,8 +1311,9 @@
   function logSession(minutes, status, type){
     var sessions = loadSessions();
     var ts = nowMs();
+    var id = generateId();
     sessions.push({
-      id: generateId(),
+      id: id,
       date: todayKey(new Date(ts)),
       category: state.activeTaskCategory || 'Uncategorized',
       task: state.activeTaskName || 'Untitled task',
@@ -1033,9 +1321,12 @@
       minutes: minutes,
       timestamp: ts,
       status: status || 'completed',
-      type: type || 'focus'
+      type: type || 'focus',
+      intention: state.dayIntentionDate === todayKey() && state.dayIntention ? state.dayIntention : null,
+      quality: null
     });
     saveSessions(sessions);
+    return id;
   }
 
   function refreshStats(){
@@ -1062,6 +1353,7 @@
     els.todayPomodoros.textContent = todayCount + (todayCount === 1 ? ' pomodoro' : ' pomodoros');
     els.allTimeTotal.textContent = formatDuration(allTimeMin);
     els.allTimePomodoros.textContent = allTimePomodoros + (allTimePomodoros === 1 ? ' pomodoro' : ' pomodoros');
+    renderBudget(todayMin);
 
     // "Today" vs the daily average over every other day that has sessions —
     // gives the featured tile a comparison instead of a bare absolute number.
@@ -1082,23 +1374,120 @@
       els.todayCompare.hidden = true;
     }
 
-    // current streak: consecutive days ending today (or yesterday if nothing logged today yet)
-    var streak = 0;
-    var cursor = new Date();
-    if(!daysWithSessions[todayKey(cursor)]){
-      cursor.setDate(cursor.getDate() - 1);
+    // Days practised in a rolling 28-day window, deliberately NOT a
+    // consecutive-day streak. A streak that resets to zero punishes a single
+    // missed day, and the habit evidence says one miss costs almost nothing —
+    // while a broken streak hurts roughly four times as much as an intact one
+    // helps, and reliably drives people to abandon the tool outright.
+    // See docs/motivation-evidence.md.
+    var WINDOW_DAYS = 28;
+    var practisedInWindow = 0;
+    var windowCursor = new Date();
+    for(var w = 0; w < WINDOW_DAYS; w++){
+      if(daysWithSessions[todayKey(windowCursor)]) practisedInWindow += 1;
+      windowCursor.setDate(windowCursor.getDate() - 1);
     }
-    while(daysWithSessions[todayKey(cursor)]){
-      streak += 1;
-      cursor.setDate(cursor.getDate() - 1);
-    }
-    var best = Math.max(streak, longestStreak(daysWithSessions));
-    els.streakDays.textContent = String(streak);
-    els.bestStreak.textContent = 'Best ' + best + (best === 1 ? ' day' : ' days');
+    els.streakDays.textContent = practisedInWindow + '/' + WINDOW_DAYS;
+    els.bestStreak.textContent = describeGap(daysWithSessions);
 
+    renderComeback(daysWithSessions);
+    renderSkills(focusSessions);
     renderLogForDate(sessions);
     renderInsights(sessions);
     renderYearHeatmap(focusSessions);
+  }
+
+  // ---------- hours logged per skill ----------
+  // Deliberately a ledger, not a progress-to-mastery bar. The marker is
+  // whatever the user typed, described as "your marker" rather than a
+  // threshold, and a session short of it is never rendered as a shortfall:
+  // rewards scaled to how far you fell short are the most demotivating
+  // arrangement in the whole reward literature, while a plain binary "reached"
+  // is close to harmless. See docs/motivation-evidence.md.
+  // Which skill's marker is open for editing — click-to-edit, the same idiom
+  // the task category chip and the log row already use, rather than parking a
+  // permanent number input on every row.
+  var editingSkillName = null;
+
+  function loadSkillMarks(){
+    try{
+      var raw = localStorage.getItem(STORAGE_SKILL_MARKS);
+      var obj = raw ? JSON.parse(raw) : {};
+      return (obj && typeof obj === 'object' && !Array.isArray(obj)) ? obj : {};
+    }catch(e){ return {}; }
+  }
+
+  function saveSkillMarks(obj){
+    try{ localStorage.setItem(STORAGE_SKILL_MARKS, JSON.stringify(obj)); }catch(e){ /* ignore */ }
+  }
+
+  function renderSkills(focusSessions){
+    if(!els.skillsList) return;
+    var byCategory = {};
+    focusSessions.forEach(function(s){
+      var key = s.category || 'Uncategorized';
+      byCategory[key] = (byCategory[key] || 0) + s.minutes;
+    });
+    var marks = loadSkillMarks();
+    var rows = Object.keys(byCategory).map(function(name){
+      return {name: name, minutes: byCategory[name], mark: marks[name] || null};
+    }).sort(function(a, b){ return b.minutes - a.minutes; });
+
+    els.skillsList.innerHTML = '';
+    if(rows.length === 0){
+      var empty = document.createElement('li');
+      empty.className = 'empty-note';
+      empty.textContent = 'Nothing logged yet.';
+      els.skillsList.appendChild(empty);
+      return;
+    }
+
+    // Bar length is relative to the biggest skill, never to the marker: a bar
+    // that fills toward a target renders how far short you fell, which is the
+    // most demotivating shape a progress display can take. Against your own
+    // largest total it is just a size comparison, like the category donut.
+    var top = rows[0].minutes || 1;
+
+    rows.forEach(function(r){
+      var reached = r.mark && (r.minutes / 60) >= r.mark;
+      var li = document.createElement('li');
+      // Reuses the category-legend row: same pill-inside-.cat-name structure,
+      // same bar, same mono figures, so this card reads as part of the app.
+      li.className = 'cat-row skill-row';
+
+      var markCell = r.name === editingSkillName
+        ? '<input type="number" class="inline-edit-input skill-mark-input" min="1" max="50000" ' +
+            'value="' + (r.mark || '') + '" placeholder="h" ' +
+            'aria-label="Marker in hours for ' + escapeAttr(r.name) + '">'
+        : '<button type="button" class="skill-mark-btn' + (r.mark ? '' : ' skill-mark-empty') + '" ' +
+            'title="' + (r.mark ? 'Change your marker' : 'Set a marker') + '">' +
+            (r.mark ? r.mark + 'h' + (reached ? ' ✓' : '') : '+ marker') +
+          '</button>';
+
+      li.innerHTML =
+        '<span class="cat-name"><span class="cat-pill ' + categoryColorClass(r.name) + '">' + escapeHtml(r.name) + '</span></span>' +
+        '<span class="cat-bar-track"><span class="cat-bar-fill' + (reached ? ' cat-bar-reached' : '') + '" style="width:' +
+          Math.max(2, Math.round((r.minutes / top) * 100)) + '%"></span></span>' +
+        '<span class="cat-minutes">' + formatDuration(r.minutes) + '</span>' +
+        '<span class="skill-mark-cell">' + markCell + '</span>';
+
+      li.dataset.name = r.name;
+      els.skillsList.appendChild(li);
+    });
+
+    if(editingSkillName){
+      var open = els.skillsList.querySelector('.skill-mark-input');
+      if(open) open.focus();
+    }
+  }
+
+  function commitSkillMark(name, raw){
+    var marks = loadSkillMarks();
+    var v = parseInt(raw, 10);
+    if(!v || v < 1){ delete marks[name]; } else { marks[name] = Math.min(50000, v); }
+    saveSkillMarks(marks);
+    editingSkillName = null;
+    refreshStats();
   }
 
   // ---------- yearly pomodoro heatmap (Jan 1 - Dec 31, current year) ----------
@@ -1172,21 +1561,44 @@
     }
   }
 
-  function longestStreak(daysWithSessions){
+  // Days since the last logged day. -1 when there is no history at all.
+  function daysSinceLastPractised(daysWithSessions){
     var dates = Object.keys(daysWithSessions).sort();
-    var longest = 0, current = 0, prevDate = null;
-    dates.forEach(function(ds){
-      var d = new Date(ds + 'T00:00:00');
-      if(prevDate){
-        var diffDays = Math.round((d - prevDate) / 86400000);
-        current = diffDays === 1 ? current + 1 : 1;
-      } else {
-        current = 1;
-      }
-      longest = Math.max(longest, current);
-      prevDate = d;
-    });
-    return longest;
+    if(dates.length === 0) return -1;
+    var last = new Date(dates[dates.length - 1] + 'T00:00:00');
+    var today = new Date(todayKey() + 'T00:00:00');
+    return Math.round((today - last) / 86400000);
+  }
+
+  // Purely factual, never a verdict — no "best streak" to fall short of.
+  function describeGap(daysWithSessions){
+    var gap = daysSinceLastPractised(daysWithSessions);
+    if(gap < 0) return 'No sessions logged yet';
+    if(gap === 0) return 'Practised today';
+    if(gap === 1) return 'Last session yesterday';
+    return 'Last session ' + gap + ' days ago';
+  }
+
+  // The comeback nudge: rewarding the *return* after a lapse was the single
+  // best-performing arm of 54 in the largest habit field experiment run
+  // (+27%), and arms rewarding rigid consistency beat none of the others.
+  // So this speaks up exactly at the moment people usually quit, and frames
+  // the gap as spent rather than owed. Kept visually quiet on purpose:
+  // making a reward signal visually salient flips its effect negative.
+  function renderComeback(daysWithSessions){
+    if(!els.comeback) return;
+    // Once today's first session is logged the message has done its job.
+    if(daysWithSessions[todayKey()]){ els.comeback.hidden = true; return; }
+
+    var gap = daysSinceLastPractised(daysWithSessions);
+    if(gap < 2){ els.comeback.hidden = true; return; }
+
+    var now = new Date();
+    var freshStart = now.getDay() === 1 ? 'a new week' : (now.getDate() === 1 ? 'a new month' : '');
+    els.comeback.textContent = freshStart
+      ? 'Welcome back — ' + freshStart + ', clean slate. The ' + gap + ' days away do not carry over.'
+      : 'Welcome back — first session in ' + gap + ' days. Starting again is the part that counts.';
+    els.comeback.hidden = false;
   }
 
   function formatDuration(totalMinutes){
@@ -1595,13 +2007,15 @@
     var taskStr = s.task ? s.task : '—';
     var statusTag = s.status === 'skipped' ? ' <span class="log-status-tag">· cut short</span>' : '';
     var typeTag = s.type === 'break' ? ' <span class="log-status-tag">· break</span>' : '';
+    var qualityTag = s.quality ? ' <span class="log-quality log-quality-' + s.quality + '">' + s.quality + '</span>' : '';
+    var noteTitle = s.intention ? taskStr + ' — intention: ' + s.intention : taskStr;
     li.innerHTML =
       '<span class="log-time">' + timeStr + '</span>' +
       '<span class="log-detail">' +
         '<span class="log-category">' +
-          '<span class="cat-pill ' + categoryColorClass(s.category) + '">' + escapeHtml(s.category) + '</span>' + statusTag + typeTag +
+          '<span class="cat-pill ' + categoryColorClass(s.category) + '">' + escapeHtml(s.category) + '</span>' + statusTag + typeTag + qualityTag +
         '</span>' +
-        '<span class="log-note" title="' + escapeAttr(taskStr) + '">' + escapeHtml(taskStr) + '</span>' +
+        '<span class="log-note" title="' + escapeAttr(noteTitle) + '">' + escapeHtml(taskStr) + '</span>' +
       '</span>' +
       '<span class="log-minutes">' + s.minutes + 'm</span>' +
       '<span class="log-actions">' +
@@ -2030,11 +2444,12 @@
   function buildBackupData(){
     return {
       app: 'pomodoro-bench',
-      version: 4,
+      version: 5,
       exportedAt: nowMs(),
       sessions: loadSessions(),
       tasks: loadTasks(),
-      categories: loadCategories()
+      categories: loadCategories(),
+      presets: loadCustomPresets()
     };
   }
 
@@ -2064,7 +2479,11 @@
         minutes: s.minutes,
         timestamp: s.timestamp || nowMs(),
         status: s.status === 'skipped' ? 'skipped' : 'completed',
-        type: s.type === 'break' ? 'break' : 'focus'
+        type: s.type === 'break' ? 'break' : 'focus',
+        // This whitelist drops anything not named here, so new session fields
+        // have to be added or they vanish on the next sync or import.
+        intention: typeof s.intention === 'string' ? s.intention : null,
+        quality: typeof s.quality === 'string' ? s.quality : null
       });
       sessionIds[id] = true;
       addedSessions += 1;
@@ -2109,6 +2528,33 @@
     saveCategories(currentCategories);
     fillCategorySelectWithNew(els.newTaskCategory, currentCategories, els.newTaskCategory.value);
     updateCategoryFormAvailability();
+
+    // Custom session types, merged by id like everything else. Built-in ids
+    // are skipped so an older backup can never shadow a built-in preset.
+    var incomingPresets = (data && Array.isArray(data.presets)) ? data.presets : [];
+    var currentPresets = loadCustomPresets();
+    var presetIds = {};
+    PRESETS.forEach(function(p){ presetIds[p.id] = true; });
+    currentPresets.forEach(function(p){ presetIds[p.id] = true; });
+    var addedPresets = 0;
+    incomingPresets.forEach(function(p){
+      if(!p || !p.id || !p.label) return;
+      if(typeof p.work !== 'number' || typeof p.brk !== 'number') return;
+      if(presetIds[p.id]) return;
+      currentPresets.push({
+        id: p.id,
+        label: String(p.label).slice(0, 40),
+        work: Math.max(1, Math.min(180, p.work)),
+        brk: Math.max(1, Math.min(60, p.brk)),
+        note: typeof p.note === 'string' ? p.note : 'Your own session type.'
+      });
+      presetIds[p.id] = true;
+      addedPresets += 1;
+    });
+    if(addedPresets > 0){
+      saveCustomPresets(currentPresets);
+      renderPresets();
+    }
 
     renderTasks();
     refreshStats();
@@ -2164,6 +2610,9 @@
     state.workMin = v;
     if(!state.running && state.mode === 'focus'){ resetPhase(); }
     saveTimerState();
+    // Either box changes the ratio, and resetPhase() (which re-renders) only
+    // runs for the box matching the current phase — so refresh explicitly.
+    renderScaleBreak();
   });
   els.breakInput.addEventListener('change', function(){
     var v = Math.max(1, Math.min(60, parseInt(els.breakInput.value,10) || 5));
@@ -2171,6 +2620,76 @@
     state.breakMin = v;
     if(!state.running && state.mode !== 'focus'){ resetPhase(); }
     saveTimerState();
+    renderScaleBreak();
+  });
+  function setPresetFormOpen(open){
+    els.presetAddForm.hidden = !open;
+    els.presetAddBtn.hidden = open;
+    if(open){
+      els.presetNewName.value = '';
+      els.presetNewWork.value = 30;
+      els.presetNewBreak.value = 6;
+      els.presetNewName.focus();
+    }
+  }
+
+  els.presetAddBtn.addEventListener('click', function(){ setPresetFormOpen(true); });
+  els.presetCancelBtn.addEventListener('click', function(){ setPresetFormOpen(false); });
+  els.presetSaveBtn.addEventListener('click', function(){
+    var name = els.presetNewName.value.trim();
+    if(!name){ els.presetNewName.focus(); return; }
+    addCustomPreset(name, parseInt(els.presetNewWork.value, 10), parseInt(els.presetNewBreak.value, 10));
+    setPresetFormOpen(false);
+  });
+  els.presetNewName.addEventListener('keydown', function(e){
+    if(e.key === 'Enter'){ e.preventDefault(); els.presetSaveBtn.click(); }
+    else if(e.key === 'Escape'){ setPresetFormOpen(false); }
+  });
+
+  els.skillsList.addEventListener('click', function(e){
+    var btn = e.target.closest('.skill-mark-btn');
+    if(!btn) return;
+    var row = btn.closest('.skill-row');
+    editingSkillName = row ? row.dataset.name : null;
+    renderSkills(loadSessions().filter(function(s){ return s.type !== 'break'; }));
+  });
+
+  els.skillsList.addEventListener('keydown', function(e){
+    var input = e.target.closest('.skill-mark-input');
+    if(!input) return;
+    var row = input.closest('.skill-row');
+    if(e.key === 'Enter'){
+      e.preventDefault();
+      commitSkillMark(row.dataset.name, input.value);
+    } else if(e.key === 'Escape'){
+      editingSkillName = null;
+      refreshStats();
+    }
+  });
+
+  // Committing on blur too, so clicking away saves rather than silently
+  // discarding what was typed.
+  els.skillsList.addEventListener('blur', function(e){
+    var input = e.target.closest && e.target.closest('.skill-mark-input');
+    if(!input || editingSkillName === null) return;
+    var row = input.closest('.skill-row');
+    commitSkillMark(row.dataset.name, input.value);
+  }, true);
+
+  els.budgetTargetInput.addEventListener('change', function(){
+    var v = Math.max(30, Math.min(720, parseInt(els.budgetTargetInput.value, 10) || 240));
+    els.budgetTargetInput.value = v;
+    state.dailyBudgetMin = v;
+    saveTimerState();
+    renderBudget();
+  });
+  els.scaleBreakInput.addEventListener('change', function(){
+    state.proportionalBreak = els.scaleBreakInput.checked;
+    // Re-length a break that is sitting idle, but never yank the clock out
+    // from under a break already counting down.
+    if(!state.running && state.mode !== 'focus'){ resetPhase(); }
+    saveTimerState();
+    renderScaleBreak();
   });
 
   window.addEventListener('resize', function(){ refreshStats(); });

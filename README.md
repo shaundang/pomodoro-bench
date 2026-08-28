@@ -11,6 +11,9 @@ pomodoro-bench/
 ├── index.html      # nội dung trang
 ├── css/style.css   # giao diện, hỗ trợ cả light/dark theme
 ├── js/app.js        # logic đồng hồ, preset, thống kê
+├── js/sync.js       # sync đa thiết bị qua Firebase (tuỳ chọn)
+├── docs/
+│   └── session-length-evidence.md   # bằng chứng đằng sau các con số phút
 └── README.md
 ```
 
@@ -229,12 +232,22 @@ hệ điều hành đặt giảm hiệu ứng động):
 
 ## Tuỳ biến
 
-- **Preset độ dài phiên**: sửa mảng `PRESETS` ở đầu file `js/app.js` (id, tên,
-  số phút tập trung/nghỉ, ghi chú gợi ý).
+- **Preset độ dài phiên**: thêm/xoá ngay trong app bằng nút "+ New session
+  type" dưới lưới preset (lưu ở `pomodoroBench.customPresets.v1`). Muốn sửa
+  các preset dựng sẵn thì vào mảng `PRESETS` ở đầu `js/app.js` (id, tên, số
+  phút tập trung/nghỉ, ghi chú gợi ý).
+  > **Trước khi đổi bất kỳ con số phút nào, đọc
+  > [`docs/session-length-evidence.md`](docs/session-length-evidence.md).**
+  > File đó ghi lại phần đã tra cứu: cái gì thật sự có bằng chứng, con số nào
+  > được lặp lại khắp nơi nhưng **không truy được về nghiên cứu nào** (25/5,
+  > "15–25 phút để vào flow", chu kỳ 90 phút, "long break sau 4 pomodoro"…),
+  > và vì sao từng giá trị hiện tại là như vậy. Viết ra để khỏi phải search
+  > lại lần nữa.
 - **Màu sắc / font**: khai báo ở đầu `css/style.css` dưới dạng CSS variables
   (`--accent`, `--paper`, v.v.), có bản riêng cho dark mode.
 - **Dữ liệu lưu ở đâu**: `localStorage` key `pomodoroBench.sessions.v1` (lịch
   sử phiên), `pomodoroBench.tasks.v1` (danh sách task),
-  `pomodoroBench.categories.v1` (danh sách category) và
+  `pomodoroBench.categories.v1` (danh sách category),
+  `pomodoroBench.customPresets.v1` (session type tự tạo) và
   `pomodoroBench.timer.v1` (trạng thái đồng hồ hiện tại). Xoá các key này
   trong DevTools nếu muốn làm sạch hoàn toàn.

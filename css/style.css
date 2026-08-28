@@ -104,6 +104,14 @@
 }
 
 *{box-sizing:border-box;}
+/* Every font-size in this file is in rem and nothing overrode the root, so
+   the whole type scale sat at browser-default 16px — with 54 of 62 sizes
+   below 1rem, most text landed at 11-14px. This single lever lifts all of
+   it while preserving the ratios between sizes.
+   Expressed as a percentage, not px, so a reader who has raised their
+   browser's default font size still gets the benefit of it. Tune this one
+   number to taste: 100% = the old sizing, 112.5% = noticeably larger. */
+html{font-size:106.25%;} /* 17px at a default 16px browser setting */
 html,body{margin:0;padding:0;}
 body{
   background:var(--paper);
@@ -117,7 +125,9 @@ button{font-family:inherit;}
 :focus-visible{outline:2px solid var(--focus-ring); outline-offset:2px; border-radius:4px;}
 
 .page{
-  max-width:1220px;
+  /* Scaled with the root bump above (1220 × 1.0625) so the larger rem-based
+     type and padding keep the same visual density inside the page. */
+  max-width:1300px;
   margin:0 auto;
   padding:2.5rem 1.5rem 4rem;
   display:flex;
@@ -270,7 +280,9 @@ button{font-family:inherit;}
   border-right:1px solid var(--line);
 }
 .col-tasks{padding-left:1.5rem;}
-@media (max-width:900px){
+/* Raised with the root font-size: at larger type the three-column timer
+   block starts crowding at a wider viewport than it used to. */
+@media (max-width:960px){
   .timer-block{grid-template-columns:1fr;}
   .col-focus{
     border-left:none;
@@ -281,7 +293,7 @@ button{font-family:inherit;}
   .col-presets, .col-tasks{padding-left:1.35rem; padding-right:1.35rem;}
 }
 
-.col-presets h2, .col-tasks h2, .log-card h2, .breakdown-card h2, .heatmap-card h2, .insights-card h2{
+.col-presets h2, .col-tasks h2, .log-card h2, .breakdown-card h2, .heatmap-card h2, .insights-card h2, .skills-card h2{
   font-family:"Fraunces", Georgia, serif;
   font-weight:600;
   font-size:1rem;
@@ -343,6 +355,24 @@ button{font-family:inherit;}
   color:var(--ink-soft);
   max-width:60ch;
 }
+/* Custom types pair the preset button with a delete control beside it. */
+.preset-row{display:flex; align-items:stretch; gap:0.35rem;}
+.preset-row .preset-btn{flex:1 1 auto; min-width:0;}
+.preset-row .p-name{min-width:0; overflow:hidden;}
+.preset-del{flex:0 0 auto; align-self:center;}
+
+.preset-add-btn{margin-top:0.6rem; align-self:flex-start;}
+.preset-add-form{
+  display:flex;
+  flex-direction:column;
+  gap:0.5rem;
+  margin-top:0.6rem;
+  padding:0.7rem;
+  border:1px solid var(--line);
+  border-radius:8px;
+}
+.preset-add-form .inline-edit-input{width:100%;}
+.preset-add-row{display:flex; gap:0.9rem; flex-wrap:wrap;}
 
 .task-form{
   display:flex;
@@ -548,7 +578,9 @@ button{font-family:inherit;}
 /* Toggled by JS while the timer is actively counting down — a slow, quiet
    breathing glow so "running" is felt at a glance without being noisy. */
 .ring-wrap-running{ animation:ringPulse 2.2s ease-in-out infinite; }
-@media (max-width:900px){
+/* Raised with the root font-size: at larger type the three-column timer
+   block starts crowding at a wider viewport than it used to. */
+@media (max-width:960px){
   .ring-wrap{width:min(340px, 82vw); height:min(340px, 82vw);}
 }
 .ring-wrap svg{width:100%; height:100%; transform:rotate(-90deg);}
@@ -638,6 +670,107 @@ button{font-family:inherit;}
   padding:0.3rem 0.4rem;
   text-align:center;
 }
+/* The Break box still holds the ratio, but stops being the number that
+   runs — dimming it says so without hiding or disabling the field. */
+.duration-input-derived{opacity:0.55;}
+
+.scale-break-field{
+  display:flex;
+  align-items:center;
+  gap:0.45rem;
+  font-size:0.8rem;
+  color:var(--ink-soft);
+  cursor:pointer;
+}
+.scale-break-field input{accent-color:var(--accent); cursor:pointer;}
+
+.budget{
+  width:100%;
+  max-width:22rem;
+  display:flex;
+  flex-direction:column;
+  gap:0.35rem;
+}
+.budget-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:0.6rem;
+  flex-wrap:wrap;
+  font-size:0.8rem;
+  color:var(--ink-soft);
+}
+.budget-label{font-family:"JetBrains Mono", ui-monospace, monospace; font-variant-numeric:tabular-nums;}
+.budget-bar{height:4px; background:var(--line); border-radius:3px; overflow:hidden;}
+.budget-fill{height:100%; width:0; background:var(--accent); border-radius:3px; transition:width 0.3s ease;}
+/* Hitting the target is a stop sign, not an achievement — colour it as the
+   "enough" state rather than the accent used for progress. */
+.budget-fill-full{background:var(--good);}
+
+/* Comeback nudge. Kept as a quiet line rather than a celebratory banner:
+   making a reward signal visually prominent is what flips its effect from
+   helpful to demotivating. */
+.comeback{
+  margin:0;
+  padding:0.6rem 0.9rem;
+  border-left:2px solid var(--good);
+  background:var(--good-soft);
+  border-radius:0 6px 6px 0;
+  font-size:0.86rem;
+  color:var(--ink);
+}
+.comeback[hidden]{display:none;}
+
+.intent-card{padding:1rem 1.1rem 1.1rem; display:flex; flex-direction:column; gap:0.6rem;}
+.intent-card[hidden]{display:none;}
+.intent-card h2{
+  font-family:"Fraunces", Georgia, serif;
+  font-weight:600;
+  font-size:1rem;
+  margin:0;
+  letter-spacing:-0.005em;
+}
+.intent-actions{display:flex; gap:0.5rem; flex-wrap:wrap;}
+
+.skills-intro{margin:0 0 0.8rem; max-width:70ch;}
+.skills-intro code{font-family:"JetBrains Mono", ui-monospace, monospace; font-size:0.92em;}
+/* Rows are .cat-row, so layout, the bar and the mono figures all come from
+   the category legend already in use. Only the marker cell is new. */
+.skills-list{gap:0.7rem;}
+.cat-bar-reached{background:var(--good);}
+.skill-mark-cell{flex:0 0 auto; min-width:7ch; text-align:right;}
+.skill-mark-btn{
+  border:1px solid transparent;
+  background:transparent;
+  color:var(--ink-soft);
+  font-family:"JetBrains Mono", ui-monospace, monospace;
+  font-variant-numeric:tabular-nums;
+  font-size:0.74rem;
+  padding:0.15rem 0.4rem;
+  border-radius:6px;
+  cursor:pointer;
+  white-space:nowrap;
+}
+.skill-mark-btn:hover{border-color:var(--line); color:var(--ink);}
+/* Unset markers stay faint until hovered — an affordance, not a to-do item
+   sitting in the corner of every row. */
+.skill-mark-empty{opacity:0.5; font-family:"Work Sans", sans-serif;}
+.skill-mark-btn.skill-mark-empty:hover{opacity:1;}
+.skill-mark-input{
+  width:5rem;
+  text-align:right;
+  font-family:"JetBrains Mono", ui-monospace, monospace;
+  padding:0.15rem 0.35rem;
+  font-size:0.74rem;
+}
+
+.log-quality{
+  font-size:0.68rem;
+  text-transform:uppercase;
+  letter-spacing:0.03em;
+  color:var(--ink-soft);
+}
+.log-quality-deep{color:var(--good); font-weight:600;}
 
 .banner{
   padding:0.8rem 1rem;
@@ -699,7 +832,9 @@ button{font-family:inherit;}
 .tile-compare-up{color:var(--accent);}
 .tile-compare-down{color:var(--ink-soft);}
 
-.log-card, .breakdown-card, .heatmap-card, .insights-card{padding:1rem 1.1rem 1.1rem;}
+/* .card carries no padding of its own, so every card class has to be listed
+   here or its content sits flush against the border. */
+.log-card, .breakdown-card, .heatmap-card, .insights-card, .skills-card{padding:1rem 1.1rem 1.1rem;}
 #hourChart{width:100%; height:140px; display:block; cursor:crosshair;}
 .hour-chart-wrap{position:relative;}
 .hour-chart-tooltip{
@@ -737,7 +872,7 @@ button{font-family:inherit;}
   align-items:start;
   margin-top:0.9rem;
 }
-@media (max-width:640px){
+@media (max-width:680px){
   .insights-grid{grid-template-columns:1fr;}
 }
 .insight-panel h3{
@@ -1115,7 +1250,7 @@ button{font-family:inherit;}
 
 @media (prefers-reduced-motion: reduce){
   .ring-progress, .preset-btn, .btn, .tab-btn, .range-tab-btn, .icon-btn,
-  .task-check, .task-progress-fill{
+  .task-check, .task-progress-fill, .budget-fill{
     transition:none;
   }
   .view, .view > *, .stats-grid > *, .stat-tiles > .tile,
