@@ -1431,8 +1431,10 @@
 
   // The lowest rung still ahead of you, never past the goal. Once every rung
   // below the goal is behind you the goal itself becomes the target, so the
-  // ladder adapts to a goal of 600h as readily as one of 10,000h. Used only
-  // for the "next Nh" signpost in the tooltip, not for the bar's length.
+  // ladder adapts to a goal of 600h as readily as one of 10,000h.
+  //
+  // Only ever consulted for a skill still on the default goal — see
+  // skillBarTarget below.
   function nextMilestone(hours, goal){
     for(var i = 0; i < SKILL_MILESTONES.length; i++){
       if(SKILL_MILESTONES[i] >= goal) break;
@@ -1441,28 +1443,34 @@
     return goal;
   }
 
-  // Position on the way to the goal, log-scaled: every doubling of hours moves
-  // the bar the same distance.
+  // What the bar is measured against, which depends on whether the goal is
+  // one the user chose. The two cases answer genuinely different questions:
   //
-  // Sizing the bar against the next rung instead made it ignore the goal
-  // entirely — the rung only ever depended on the goal when the goal was set
-  // *below* it, so 45h logged read 90% whether the goal was 50h or 10,000h.
-  // Plain linear-to-goal responds to the goal but sits at 0-1% for the first
-  // hundred hours of a 10,000h goal, which is what the ladder was papering
-  // over. A log scale is the only one that satisfies both: it is strictly
-  // decreasing in the goal, so raising the goal always visibly shortens the
-  // bar, and strictly increasing in hours, so the bar only ever moves forward.
+  //   default goal   10,000h is the app's placeholder, not a target anybody
+  //                  picked, so measuring against it says nothing. The ladder
+  //                  supplies a near target instead and the bar always moves.
+  //                  Crossing a rung raises the denominator and the bar drops
+  //                  back — the ordinary level-up pattern.
   //
-  // The compression is also the honest shape for the thing being measured: the
-  // power law of practice means gains fall off with accumulated hours, so
-  // 10h->20h really is comparable progress to 1000h->2000h. It does mean 50%
-  // is not "half the hours" — the tooltip carries the raw figures for that.
-  function goalProgressPct(hours, goal){
-    if(hours <= 0 || goal <= 0) return 0;
-    if(hours >= goal) return 100;
-    var pct = Math.round(Math.log(hours + 1) / Math.log(goal + 1) * 100);
-    // Floor of 1 so any logged time shows a sliver rather than nothing.
-    return Math.min(100, Math.max(1, pct));
+  //   chosen goal    Setting a number is itself the statement "this is my
+  //                  target", so the bar reports position against it, plainly
+  //                  and linearly. 10h of 300h is 3%.
+  //
+  // Two rejected alternatives, both of which broke one case to serve the other:
+  // measuring against the rung in *both* cases made the bar ignore the chosen
+  // goal entirely (45h read 90% whether the goal was 50h or 10,000h, so
+  // re-setting it appeared to do nothing); and a log scale, which responds to
+  // the goal but inflates early progress against a chosen one — 10h of 300h
+  // showed 42%, which is simply not where you are.
+  function skillBarTarget(hours, goal, usingDefault){
+    return usingDefault ? nextMilestone(hours, goal) : goal;
+  }
+
+  function skillBarPct(hours, target){
+    if(hours <= 0 || target <= 0) return 0;
+    if(hours >= target) return 100;
+    // Floor of 1 so any logged time shows a sliver rather than an empty track.
+    return Math.min(100, Math.max(1, Math.round((hours / target) * 100)));
   }
 
   function renderSkills(focusSessions){
@@ -1486,8 +1494,9 @@
       return;
     }
 
-    // The bar fills toward the row's own goal. It used to be sized against
-    // the largest skill, which meant the biggest one was permanently full and
+    // The bar fills toward the row's own goal (or, on the default goal, toward
+    // the next rung — see skillBarTarget). It used to be sized against the
+    // largest skill, which meant the biggest one was permanently full and
     // changing its goal did nothing — while the colour still flipped on
     // reaching the goal, so length and colour meant two different things.
     // Avoiding a goal-shaped bar was over-applying the reward research: the
@@ -1501,11 +1510,12 @@
       var goal = r.mark || DEFAULT_SKILL_GOAL_HOURS;
       var hours = r.minutes / 60;
       var reached = hours >= goal;
-      // Bar tracks the goal; the rung is only the next signpost in the tooltip.
-      var target = nextMilestone(hours, goal);
-      var pct = goalProgressPct(hours, goal);
+      var target = skillBarTarget(hours, goal, usingDefault);
+      var pct = skillBarPct(hours, target);
+      // The rung is only worth naming while it differs from the goal, which is
+      // exactly the default case; otherwise "next 300h · goal 300h" twice over.
       var barTitle = formatDuration(r.minutes) +
-        (reached ? ' — goal reached' : ' · next ' + target + 'h') +
+        (reached ? ' — goal reached' : (usingDefault ? ' · next ' + target + 'h' : '')) +
         ' · goal ' + goal + 'h' + (usingDefault ? ' (default)' : '');
       var li = document.createElement('li');
       // Reuses the category-legend row: same pill-inside-.cat-name structure,
