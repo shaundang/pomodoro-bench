@@ -758,7 +758,14 @@
       if(Notification.permission !== 'granted') return;
       var n = new Notification(title, {
         body: body,
-        tag: 'pomodoro-bench-phase'
+        // One tag so a new phase replaces the previous notification rather
+        // than stacking up. But replacing is silent by default: an unread
+        // notification sitting in the OS tray would be updated in place with
+        // no banner and no sound, so after the first one the app appeared to
+        // stop notifying entirely until the tray was cleared. renotify says
+        // alert again on replacement, which is the whole point here.
+        tag: 'pomodoro-bench-phase',
+        renotify: true
       });
       n.onclick = function(){
         window.focus();
