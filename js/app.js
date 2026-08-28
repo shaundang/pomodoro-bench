@@ -568,7 +568,14 @@
 
     state.endAt = null;
     if(state.mode === 'focus'){
-      state.mode = state.completedInCycle > 0 && (state.completedInCycle % 4 === 3) ? 'longbreak' : 'break';
+      // Mirror completePhase()'s bookkeeping exactly: advance the cycle
+      // counter here too, otherwise skipping a focus session leaves it one
+      // behind and the long-break condition re-fires on the next real
+      // completion (e.g. skip → long break → skip that too → finish the
+      // next focus session and it's long break again instead of short).
+      state.completedInCycle += 1;
+      var goingLong = state.completedInCycle % 4 === 0;
+      state.mode = goingLong ? 'longbreak' : 'break';
     } else {
       state.mode = 'focus';
     }
