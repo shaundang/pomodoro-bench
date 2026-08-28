@@ -1465,7 +1465,8 @@
           '</button>';
 
       li.innerHTML =
-        '<span class="cat-name"><span class="cat-pill ' + categoryColorClass(r.name) + '">' + escapeHtml(r.name) + '</span></span>' +
+        // title so a name clipped by the fixed-width column is still readable.
+        '<span class="cat-name"><span class="cat-pill ' + categoryColorClass(r.name) + '" title="' + escapeAttr(r.name) + '">' + escapeHtml(r.name) + '</span></span>' +
         '<span class="cat-bar-track"><span class="cat-bar-fill' + (reached ? ' cat-bar-reached' : '') + '" style="width:' +
           Math.max(2, Math.round((r.minutes / top) * 100)) + '%"></span></span>' +
         '<span class="cat-minutes">' + formatDuration(r.minutes) + '</span>' +

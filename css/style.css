@@ -738,7 +738,29 @@ button{font-family:inherit;}
    the category legend already in use. Only the marker cell is new. */
 .skills-list{gap:0.7rem;}
 .cat-bar-reached{background:var(--good);}
-.skill-mark-cell{flex:0 0 auto; min-width:7ch; text-align:right;}
+/* Fixed flex-basis on every column except the bar. Each row is its own flex
+   container, so `flex:0 0 auto` with a min-width sizes each column to its own
+   content and the bars end up starting and ending at different x positions
+   from row to row. The bar is the only flexible track, so it absorbs the
+   remainder identically on every row. Scoped to .skill-row so the category
+   legend, which has no bar and does not need this, is left alone. */
+.skill-row .cat-name{flex:0 0 9rem; min-width:0; overflow:hidden;}
+.skill-row .cat-minutes{flex:0 0 5.5rem; min-width:0;}
+.skill-row .cat-pill{
+  /* inline-block, not the inherited inline-flex, so text-overflow applies. */
+  display:inline-block;
+  max-width:100%;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  vertical-align:middle;
+}
+.skill-mark-cell{flex:0 0 6rem; text-align:right;}
+@media (max-width:680px){
+  .skill-row .cat-name{flex:0 0 6.5rem;}
+  .skill-row .cat-minutes{flex:0 0 4.5rem;}
+  .skill-mark-cell{flex:0 0 5rem;}
+}
 .skill-mark-btn{
   border:1px solid transparent;
   background:transparent;
