@@ -1455,20 +1455,25 @@
       // same bar, same mono figures, so this card reads as part of the app.
       li.className = 'cat-row skill-row';
 
+      // "goal" rather than "marker", and prefixed when set: two bare figures
+      // side by side gave no clue which was hours logged and which was the
+      // number being aimed at.
       var markCell = r.name === editingSkillName
         ? '<input type="number" class="inline-edit-input skill-mark-input" min="1" max="50000" ' +
             'value="' + (r.mark || '') + '" placeholder="h" ' +
-            'aria-label="Marker in hours for ' + escapeAttr(r.name) + '">'
+            'aria-label="Hour goal for ' + escapeAttr(r.name) + '">'
         : '<button type="button" class="skill-mark-btn' + (r.mark ? '' : ' skill-mark-empty') + '" ' +
-            'title="' + (r.mark ? 'Change your marker' : 'Set a marker') + '">' +
-            (r.mark ? r.mark + 'h' + (reached ? ' ✓' : '') : '+ marker') +
+            'title="' + (r.mark ? 'Change your hour goal' : 'Set your own hour goal') + '">' +
+            (r.mark ? 'goal ' + r.mark + 'h' + (reached ? ' ✓' : '') : '+ goal') +
           '</button>';
 
       li.innerHTML =
         // title so a name clipped by the fixed-width column is still readable.
         '<span class="cat-name"><span class="cat-pill ' + categoryColorClass(r.name) + '" title="' + escapeAttr(r.name) + '">' + escapeHtml(r.name) + '</span></span>' +
-        '<span class="cat-bar-track"><span class="cat-bar-fill' + (reached ? ' cat-bar-reached' : '') + '" style="width:' +
-          Math.max(2, Math.round((r.minutes / top) * 100)) + '%"></span></span>' +
+        // div, not span: width and height do not apply to inline elements, so
+        // a span fill renders as a zero-size box and only the track shows.
+        '<div class="cat-bar-track"><div class="cat-bar-fill ' + categoryColorClass(r.name) + (reached ? ' cat-bar-reached' : '') + '" style="width:' +
+          Math.max(2, Math.round((r.minutes / top) * 100)) + '%"></div></div>' +
         '<span class="cat-minutes">' + formatDuration(r.minutes) + '</span>' +
         '<span class="skill-mark-cell">' + markCell + '</span>';
 

@@ -737,7 +737,20 @@ button{font-family:inherit;}
 /* Rows are .cat-row, so layout, the bar and the mono figures all come from
    the category legend already in use. Only the marker cell is new. */
 .skills-list{gap:0.7rem;}
-.cat-bar-reached{background:var(--good);}
+/* Each bar carries its own skill's colour, using the saturated -fg variant
+   the way .preset-dot does, so a bar reads as the same entity as its pill.
+   Scoped to .skill-row so the shared .cat-bar-fill keeps its accent default
+   anywhere else it gets used. */
+.skill-row .cat-bar-fill.cat-color-0{background:var(--catclr-0-fg);}
+.skill-row .cat-bar-fill.cat-color-1{background:var(--catclr-1-fg);}
+.skill-row .cat-bar-fill.cat-color-2{background:var(--catclr-2-fg);}
+.skill-row .cat-bar-fill.cat-color-3{background:var(--catclr-3-fg);}
+.skill-row .cat-bar-fill.cat-color-4{background:var(--catclr-4-fg);}
+.skill-row .cat-bar-fill.cat-color-5{background:var(--catclr-5-fg);}
+/* Declared after the colour rules and at the same specificity (three classes
+   each), so reaching the goal overrides the skill colour instead of losing to
+   it. Order is what decides here, not weight. */
+.skill-row .cat-bar-fill.cat-bar-reached{background:var(--good);}
 /* Fixed flex-basis on every column except the bar. Each row is its own flex
    container, so `flex:0 0 auto` with a min-width sizes each column to its own
    content and the bars end up starting and ending at different x positions
@@ -1099,7 +1112,9 @@ button{font-family:inherit;}
 .cat-row{display:flex; align-items:center; gap:0.6rem; font-size:0.82rem;}
 .cat-name{flex:0 0 auto; min-width:8.5ch;}
 .cat-bar-track{flex:1 1 auto; height:6px; background:var(--line); border-radius:4px; overflow:hidden;}
-.cat-bar-fill{height:100%; background:var(--accent); border-radius:4px;}
+/* display:block so the width/height still apply if this is ever put on an
+   inline element — an inline box ignores both and renders nothing. */
+.cat-bar-fill{display:block; height:100%; background:var(--accent); border-radius:4px;}
 
 .pie-layout{display:flex; align-items:center; gap:1.4rem; flex-wrap:wrap;}
 #categoryPieChart{flex:0 0 auto; width:150px; height:150px;}
