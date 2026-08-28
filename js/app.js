@@ -29,6 +29,12 @@
   var STORAGE_SKILL_MARKS = 'pomodoroBench.skillMarks.v1';
   // Applied to any skill with no goal of its own. One number to change here.
   var DEFAULT_SKILL_GOAL_HOURS = 10000;
+  // Rungs the bar fills toward on its way to the goal. Without them a 10,000h
+  // goal leaves the bar at 1% for years, which is no use to anyone — least of
+  // all someone who cannot estimate the total a skill needs and just wants to
+  // see the next step. Motivation also rises as a goal comes into reach, so a
+  // near rung is worth more than a distant one.
+  var SKILL_MILESTONES = [10, 50, 100, 500, 1000, 2500, 5000, 10000];
   var DEFAULT_CATEGORIES = ['Learning', 'Work', 'Personal'];
 
   var els = {
@@ -1423,6 +1429,17 @@
     try{ localStorage.setItem(STORAGE_SKILL_MARKS, JSON.stringify(obj)); }catch(e){ /* ignore */ }
   }
 
+  // The lowest rung still ahead of you, never past the goal. Once every rung
+  // below the goal is behind you the goal itself becomes the target, so the
+  // ladder adapts to a goal of 600h as readily as one of 10,000h.
+  function nextMilestone(hours, goal){
+    for(var i = 0; i < SKILL_MILESTONES.length; i++){
+      if(SKILL_MILESTONES[i] >= goal) break;
+      if(hours < SKILL_MILESTONES[i]) return SKILL_MILESTONES[i];
+    }
+    return goal;
+  }
+
   function renderSkills(focusSessions){
     if(!els.skillsList) return;
     var byCategory = {};
@@ -1457,12 +1474,14 @@
       // faint so it reads as a suggestion rather than something you chose.
       var usingDefault = !r.mark;
       var goal = r.mark || DEFAULT_SKILL_GOAL_HOURS;
-      var reached = (r.minutes / 60) >= goal;
-      var pct = r.minutes > 0
-        ? Math.min(100, Math.max(1, Math.round((r.minutes / 60 / goal) * 100)))
-        : 0;
-      var barTitle = formatDuration(r.minutes) + ' of a ' + goal + 'h goal' +
-        (usingDefault ? ' (default)' : '');
+      var hours = r.minutes / 60;
+      var reached = hours >= goal;
+      // Fills toward the next rung, not the goal, so it actually moves.
+      var target = nextMilestone(hours, goal);
+      var pct = Math.min(100, Math.round((hours / target) * 100));
+      var barTitle = formatDuration(r.minutes) +
+        (reached ? ' — goal reached' : ' · next ' + target + 'h') +
+        ' · goal ' + goal + 'h' + (usingDefault ? ' (default)' : '');
       var li = document.createElement('li');
       // Reuses the category-legend row: same pill-inside-.cat-name structure,
       // same bar, same mono figures, so this card reads as part of the app.

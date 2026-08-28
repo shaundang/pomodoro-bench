@@ -352,7 +352,7 @@ Built 2026-08-28:
 | **Session review** — Scattered / Steady / Deep, no score | Informational feedback, not a reward | Feedback **d=+0.33**; tangible completion rewards **d=−0.36** |
 | **"Days practised · last 28"** replacing the day-streak counter — never resets to zero | Forgiving consistency | Broken streak b=−1.01 vs intact +0.25; one miss is harmless (Lally); GitHub removed streaks |
 | **Comeback note** after a gap ≥2 days, framed as spent not owed; fresh-start wording on a new week/month | Rewarding the return | **Best of 54 arms, +27%** (N=61,293); Dai/Milkman/Riis fresh-start effect |
-| **Hours logged per skill**, with a per-skill **hour goal** and a bar that fills toward it | Progress monitoring | Monitoring **d=0.40** |
+| **Hours logged per skill**, with a per-skill **hour goal** and a bar filling toward the **next milestone** on the way to it | Progress monitoring; goal-gradient | Monitoring **d=0.40**; goal-gradient is **weak** evidence (Kivetz N=108, t=2.0, unreplicated) but costs nothing here |
 | **Daily budget bar** turning `--good` at target | A ceiling, not a target | Ericsson 1993 (moderate) |
 
 ### Two decisions that went against this file, on purpose
@@ -370,8 +370,18 @@ the goal, so changing that goal appeared to do nothing.
 length why no hours-to-expert threshold is defensible, and a default is the app
 *suggesting* a number rather than the user choosing one — so this is a deliberate
 departure, recorded here rather than quietly contradicted. The number is one constant,
-`DEFAULT_SKILL_GOAL_HOURS` in `js/app.js`. Practical note: at 10,000 h the bar shows 1%
-for anything under about 100 hours, so it reads as static for a long time.
+`DEFAULT_SKILL_GOAL_HOURS` in `js/app.js`.
+
+A 10,000 h goal on its own left the bar at 1% for anything under about 100 hours, so a
+milestone ladder (`SKILL_MILESTONES`: 10, 50, 100, 500, 1000, 2500, 5000, 10000) was
+added and the bar fills toward the next rung instead. The ladder is capped by the goal,
+so a 600 h goal uses 10/50/100/500/600 and a 5 h goal just uses itself. Side effect worth
+knowing: crossing a rung raises the denominator, so the bar drops back — the usual
+level-up pattern, and the reason it keeps moving at all. Green and the ✓ still require
+the **goal**, not a rung, so "reached" keeps one meaning.
+
+The stated value of the ladder is for someone who cannot estimate how many hours a skill
+needs: they never have to pick a number, and the next step is always visible.
 
 Deliberately **not** built:
 
