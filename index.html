@@ -7,7 +7,8 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8D%85%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;1,9..144,500&family=Work+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap">
-<link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/style.css?v=7">
+<link rel="stylesheet" href="css/garden-farm.css?v=11">
 </head>
 <body>
 
@@ -33,6 +34,7 @@
   <nav class="view-tabs" role="tablist" aria-label="View">
     <button type="button" class="tab-btn" id="tabTimerBtn" role="tab" aria-selected="true" data-view="timer">⏱ Timer</button>
     <button type="button" class="tab-btn" id="tabStatsBtn" role="tab" aria-selected="false" data-view="stats">📊 Statistics</button>
+    <button type="button" class="tab-btn" id="tabGardenBtn" role="tab" aria-selected="false" data-view="garden">🌱 Garden</button>
   </nav>
 
   <section class="view view-timer" id="viewTimer" role="tabpanel" aria-labelledby="tabTimerBtn">
@@ -243,9 +245,74 @@
       <button class="btn btn-ghost-danger" id="resetStatsBtn">Reset statistics</button>
     </div>
   </section>
+
+  <section class="view view-garden" id="viewGarden" role="tabpanel" aria-labelledby="tabGardenBtn" hidden>
+    <div class="card garden-card">
+      <h2 class="garden-title">Garden</h2>
+      <div class="garden-stage" id="gardenStage">
+        <div class="garden-scene" id="gardenScene">
+          <!-- The scene is a viewport; the world inside it is moved by transform so
+               the camera can follow the farmer. Nothing here scrolls. -->
+          <div class="garden-world" id="gardenWorld">
+            <div class="garden-sky" aria-hidden="true">
+              <span class="sky-sun"></span>
+              <span class="cloud cloud-a"></span>
+              <span class="cloud cloud-b"></span>
+              <span class="cloud cloud-c"></span>
+              <span class="far-fields"></span>
+              <span class="far-trees"></span>
+            </div>
+            <div class="garden-fence" aria-hidden="true"></div>
+            <!-- Two fixed buildings on the yard: one shop, one store. They are the
+                 mouse way in to the two panels; the HUD button is the keyboard one. -->
+            <div class="farm-yard" id="gardenYard"></div>
+            <div class="garden-plot" id="gardenPlot"></div>
+            <div class="garden-verge" aria-hidden="true"></div>
+          </div>
+        </div>
+
+        <div class="garden-hud garden-hud-top">
+          <span class="hud-tokens" id="gardenCount" tabindex="0"
+                title="One finished pomodoro earns one token. Ripe plants and animals can be harvested and sold for more."></span>
+          <button type="button" class="shop-toggle" id="gardenShopToggle"
+                  aria-expanded="false" aria-controls="gardenShopPanel"
+                  title="Pick something here, then choose a spot for it in the garden.">
+            <span aria-hidden="true">🛒</span> Shop
+          </button>
+        </div>
+
+        <div class="garden-hud garden-hud-bottom">
+          <p class="garden-hint" id="gardenHint"></p>
+        </div>
+
+        <div class="store-panel" id="gardenStorePanel" role="dialog" aria-modal="true"
+             aria-labelledby="gardenStoreTitle" hidden>
+          <div class="shop-panel-head">
+            <h3 id="gardenStoreTitle">Store</h3>
+            <p class="shop-panel-note">What you have harvested. Selling turns it into tokens.</p>
+            <button type="button" class="icon-btn shop-panel-close" id="gardenStoreClose"
+                    aria-label="Close store">×</button>
+          </div>
+          <div class="garden-basket" id="gardenBasket"></div>
+        </div>
+
+        <div class="shop-panel" id="gardenShopPanel" role="dialog" aria-modal="true"
+             aria-labelledby="gardenShopTitle" hidden>
+          <div class="shop-panel-head">
+            <h3 id="gardenShopTitle">Shop</h3>
+            <p class="shop-panel-note">Pick something, then choose a spot for it in the garden.</p>
+            <span class="shop-panel-tokens" id="gardenShopTokens"></span>
+            <button type="button" class="icon-btn shop-panel-close" id="gardenShopClose"
+                    aria-label="Close shop">×</button>
+          </div>
+          <div class="garden-shop" id="gardenShop" role="group" aria-label="Shop"></div>
+        </div>
+      </div>
+    </div>
+  </section>
 </div>
 
-<script src="js/app.js?v=11"></script>
+<script src="js/app.js?v=25"></script>
 <script type="module" src="js/sync.js?v=7"></script>
 </body>
 </html>

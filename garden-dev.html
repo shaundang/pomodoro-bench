@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Garden — cấp token để test</title>
+<link rel="stylesheet" href="css/style.css?v=6">
+<style>
+  body{background:var(--paper); color:var(--ink); font-family:"Work Sans",system-ui,sans-serif;
+       margin:0; display:flex; min-height:100vh; align-items:center; justify-content:center;}
+  .box{background:var(--paper-raised); border:1px solid var(--line); border-radius:14px;
+       padding:1.6rem 1.8rem; max-width:56ch; box-shadow:var(--shadow-float);}
+  h1{font-family:"Fraunces",Georgia,serif; font-size:1.3rem; margin:0 0 0.5rem;}
+  p{font-size:0.87rem; line-height:1.55; color:var(--ink-soft);}
+  code{font-family:"JetBrains Mono",ui-monospace,monospace; font-size:0.82em;}
+  .row{display:flex; gap:0.6rem; flex-wrap:wrap; margin-top:1.1rem;}
+  .out{margin-top:1rem; font-family:"JetBrains Mono",ui-monospace,monospace; font-size:0.78rem;
+       color:var(--ink); white-space:pre-wrap;}
+  .warn{color:var(--accent); font-weight:600;}
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>Cấp token để test Garden</h1>
+  <p>Trang tạm, chỉ để thử. Nó ghi thẳng vào <code>pomodoroBench.garden.v1</code> của
+     <strong>origin đang mở</strong> — token là số suy ra từ log nên cách duy nhất để cộng thêm là
+     tăng ô <code>income</code>. Không phiên làm việc nào bị thêm hay sửa, thống kê không đổi.</p>
+  <p class="warn">localStorage tách theo origin: cấp ở <code>localhost:3000</code> thì chỉ
+     <code>localhost:3000</code> có, mở bằng <code>file://</code> sẽ không thấy.</p>
+  <div class="row">
+    <button type="button" class="btn btn-primary" id="grant">Cấp 100.000 token</button>
+    <button type="button" class="btn" id="grantMore">Cộng thêm 100.000</button>
+    <button type="button" class="btn" id="clear">Xoá sạch vườn</button>
+    <a class="btn" href="index.html">Mở app →</a>
+  </div>
+  <div class="out" id="out"></div>
+</div>
+<script>
+(function(){
+  var KEY = 'pomodoroBench.garden.v1';
+  var SESSIONS = 'pomodoroBench.sessions.v1';
+  var out = document.getElementById('out');
+
+  function load(){
+    try{
+      var g = JSON.parse(localStorage.getItem(KEY) || 'null');
+      if(g && typeof g === 'object') return g;
+    }catch(e){}
+    return { spent:0, income:0, basket:{}, items:[] };
+  }
+  function earned(){
+    try{
+      var arr = JSON.parse(localStorage.getItem(SESSIONS) || '[]');
+      return arr.filter(function(s){ return s && s.status === 'completed' && s.type !== 'break'; }).length;
+    }catch(e){ return 0; }
+  }
+  function save(g){ localStorage.setItem(KEY, JSON.stringify(g)); }
+  function show(msg){
+    var g = load();
+    var avail = Math.max(0, earned() + (g.income||0) - (g.spent||0));
+    out.textContent = msg + '\n\npomodoro đã hoàn thành : ' + earned() +
+      '\nincome (token cấp/bán)  : ' + (g.income||0) +
+      '\nspent (đã tiêu)         : ' + (g.spent||0) +
+      '\n→ token khả dụng        : ' + avail +
+      '\nsố món đã trồng         : ' + (g.items ? g.items.length : 0) +
+      '\n\nMở tab 🌱 Garden trong app để thấy. Nhớ Ctrl+Shift+R lần đầu.';
+  }
+
+  document.getElementById('grant').addEventListener('click', function(){
+    var g = load();
+    // Dat income sao cho kha dung dung 100000, bat ke da tieu bao nhieu. Dat, chu
+    // khong cong don, de bam nhieu lan khong tich thanh mot so vo nghia.
+    g.income = Math.max(0, 100000 + (g.spent||0) - earned());
+    save(g);
+    show('Đã cấp: token khả dụng = 100.000.');
+  });
+  document.getElementById('grantMore').addEventListener('click', function(){
+    var g = load();
+    g.income = (g.income||0) + 100000;
+    save(g);
+    show('Đã cộng thêm 100.000 token.');
+  });
+  document.getElementById('clear').addEventListener('click', function(){
+    localStorage.removeItem(KEY);
+    show('Đã xoá vườn: không còn món nào, income và spent về 0. Phiên làm việc không bị chạm.');
+  });
+  show('Trạng thái hiện tại của origin này:');
+})();
+</script>
+</body>
+</html>

@@ -97,7 +97,13 @@ export function getEls() {
     heatmapYear: byId('heatmapYear'),
     heatmapPrevYearBtn: byId('heatmapPrevYearBtn'),
     heatmapNextYearBtn: byId('heatmapNextYearBtn'),
-    heatmapYearTotal: byId('heatmapYearTotal')
+    heatmapYearTotal: byId('heatmapYearTotal'),
+    tabGardenBtn: byId('tabGardenBtn'),
+    viewGarden: byId('viewGarden'),
+    gardenCount: byId('gardenCount'),
+    gardenShop: byId('gardenShop'),
+    gardenPlot: byId('gardenPlot'),
+    gardenHint: byId('gardenHint')
   };
 }
 

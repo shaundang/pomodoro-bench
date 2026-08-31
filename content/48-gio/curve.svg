@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 880" width="1080" height="880">
+  <!-- Hình cốt lõi của short "48 giờ". Nền trong suốt, nét trắng + bóng tối
+       để đọc được trên cả cảnh sáng và tối.
+
+       Ý chính KHÔNG phải đường cong, mà là KHOẢNG HỞ giữa nét đứt (nếu sản lượng
+       cứ tỷ lệ thuận với giờ) và nét liền (thực tế). Khoảng hở đó là "phần hụt".
+
+       Bản v1 thất bại vì mốc 48 đặt ở 64% chiều ngang -> không còn chỗ để hai
+       đường tách ra, phần hụt bị nén vào góc và biến mất. v2 đặt mốc ở 52% và
+       làm đường cong bẹt mạnh hơn: hở ~206px, thấy được trên điện thoại.
+       Cũng đã bỏ mốc 52 khỏi hình (nó chồng lên số 48) - con số 52 đưa vào bằng
+       lớp chữ riêng trong lúc dựng, theo beat sheet. -->
+  <defs>
+    <filter id="sh" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="3" stdDeviation="6" flood-color="#000" flood-opacity="0.8"/>
+    </filter>
+    <style>
+      .ax   { stroke:#fff; stroke-width:4;  fill:none; opacity:.5 }
+      .real { stroke:#fff; stroke-width:14; fill:none; stroke-linecap:round }
+      .proj { stroke:#fff; stroke-width:8;  fill:none; stroke-dasharray:20 18; opacity:.55 }
+      .mark { stroke:#fff; stroke-width:6;  fill:none; stroke-dasharray:16 14; opacity:.95 }
+      .gap  { fill:#fff; opacity:.17 }
+      .t    { fill:#fff; font-family:'Segoe UI',Inter,system-ui,sans-serif; font-weight:700 }
+      .lbl  { font-size:38px; opacity:.7 }
+      .big  { font-size:96px }
+      .note { font-size:36px; font-weight:700; opacity:.92 }
+    </style>
+  </defs>
+
+  <g filter="url(#sh)">
+    <!-- trục -->
+    <path class="ax" d="M100 100V780H1010"/>
+
+    <!-- PHẦN HỤT: giữa đường tỷ lệ thuận (đứt) và đường thật (liền).
+         Đây là thứ người xem phải thấy trong một giây. -->
+    <path class="gap" d="M560 470 L1000 174 L1000 380 C920 392 800 400 700 424 C650 437 600 452 560 470 Z"/>
+
+    <!-- nếu sản lượng cứ tỷ lệ thuận với giờ: kéo dài đường thẳng -->
+    <path class="proj" d="M560 470 L1000 174"/>
+
+    <!-- thực tế: tỷ lệ thuận tới ngưỡng, rồi tăng với tốc độ giảm dần -->
+    <path class="real" d="M100 780 L560 470 Q760 400 1000 380"/>
+
+    <!-- mốc ngưỡng 48 -->
+    <path class="mark" d="M560 780V470"/>
+    <circle cx="560" cy="470" r="16" fill="#fff"/>
+    <text class="t big" x="560" y="862" text-anchor="middle">48</text>
+
+    <!-- nhãn trục -->
+    <text class="t lbl" x="100" y="72"  text-anchor="start">sản lượng</text>
+    <text class="t lbl" x="1010" y="845" text-anchor="end">giờ / tuần</text>
+
+    <!-- chú thích: tách xa nhau, không chồng -->
+    <text class="t note" x="1000" y="128" text-anchor="end">nếu tỷ lệ thuận</text>
+    <text class="t note" x="1000" y="448" text-anchor="end">thực tế</text>
+    <text class="t note" x="830"  y="362" text-anchor="middle" style="font-size:44px">phần hụt</text>
+  </g>
+</svg>
