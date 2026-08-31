@@ -74,6 +74,15 @@ const shopBtn = (els, kind) => els.gardenShop.querySelector('[data-shop="' + kin
 const slots = (els) => [...els.gardenPlot.querySelectorAll('button.plot-slot')];
 const slot = (els, row, col) =>
   els.gardenPlot.querySelector('[data-row="' + row + '"][data-col="' + col + '"]');
+  // The balance is drawn as a coin plus a number, so the words are no longer in
+  // the text. Reading it therefore means reading three things, and all three
+  // matter: the number a person sees, the coin that tells them it is money, and
+  // the label a screen reader gets, which is the only place the word "tokens"
+  // still lives.
+  const shownTokens = (els) => els.gardenCount.textContent.trim();
+  const spokenTokens = (els) => els.gardenCount.getAttribute('aria-label');
+  const hasCoin = (el) => !!el.querySelector('svg.coin circle.c-face');
+
 const plants = (els) => [...els.gardenPlot.querySelectorAll('span.plant')];
 const stagesOf = (els) => plants(els).map((p) => p.getAttribute('data-stage'));
 const blossoms = (p) => p.querySelectorAll('.t-bloom').length;
@@ -86,7 +95,9 @@ describe('garden tokens', () => {
       session({ status: 'abandoned' })
     ]);
     const els = await mountGarden();
-    expect(els.gardenCount.textContent).toBe('3 tokens');
+    expect(shownTokens(els)).toBe('3');
+    expect(spokenTokens(els)).toBe('3 tokens available');
+    expect(hasCoin(els.gardenCount)).toBe(true);
   });
 
   // Seeds are a view of the session log, not a second balance to keep in sync:
@@ -101,18 +112,22 @@ describe('garden tokens', () => {
     seedSessions(pomodoros(10));
     seedGarden({ spent: 4, items: [item('sunflower', 10, 3, 0)] });
     const els = await mountGarden();
-    expect(els.gardenCount.textContent).toBe('6 tokens · 4 in the ground');
+    expect(shownTokens(els)).toBe('6');
+    expect(spokenTokens(els)).toBe('6 tokens available');
   });
 
   it('counts a single seed in the singular', async () => {
     seedSessions(pomodoros(1));
     const els = await mountGarden();
-    expect(els.gardenCount.textContent).toBe('1 token');
+    expect(shownTokens(els)).toBe('1');
+    // Singular, because one token is one token and the label is read aloud.
+    expect(spokenTokens(els)).toBe('1 token available');
   });
 
   it('invites a first pomodoro when there is nothing to spend and nothing planted', async () => {
     const els = await mountGarden();
-    expect(els.gardenCount.textContent).toBe('0 tokens');
+    expect(shownTokens(els)).toBe('0');
+    expect(spokenTokens(els)).toBe('0 tokens available');
     // Nothing on the stage tells a new player what to do: the shop button and
     // the token readout carry that, on hover. A line of onboarding text
     // standing permanently over the garden is what made the screen hard to
@@ -536,7 +551,7 @@ describe('the garden plot', () => {
 
     slot(els, 1, 1).click();
     expect(plants(els)).toHaveLength(0);
-    expect(els.gardenCount.textContent).toBe('20 tokens');
+    expect(shownTokens(els)).toBe('20');
     expect(localStorage.getItem(GARDEN_KEY)).toBeNull();
   });
 });
@@ -556,7 +571,7 @@ describe('planting', () => {
     expect(typeof g.items[0].id).toBe('string');
     expect(g.items[0].plantedAt).toBeGreaterThan(0);
 
-    expect(els.gardenCount.textContent).toBe('8 tokens · 12 in the ground');
+    expect(shownTokens(els)).toBe('8');
     expect(slot(els, 3, 4).classList.contains('plot-slot-filled')).toBe(true);
     // Putting it down releases the cursor.
     expect(els.gardenShop.querySelector('.shop-item-held')).toBeNull();
@@ -586,7 +601,7 @@ describe('planting', () => {
 
     expect(gardenState().spent).toBe(5); // 3 + 2
     expect(gardenState().items.map((i) => i.kind)).toEqual(['sunflower', 'rice']);
-    expect(els.gardenCount.textContent).toBe('15 tokens · 5 in the ground');
+    expect(shownTokens(els)).toBe('15');
   });
 
   it('will not plant on top of something, and charges nothing for the attempt', async () => {
@@ -852,7 +867,7 @@ describe('rules the garden exists to keep', () => {
     localStorage.removeItem(KEYS.sessions);
     const after = await mountGarden();
 
-    expect(after.gardenCount.textContent).toBe('0 tokens · 3 in the ground');
+    expect(shownTokens(after)).toBe('0');
     expect(gardenState().items).toHaveLength(1);
     expect(plants(after)).toHaveLength(1);
     expect(after.viewGarden.textContent).not.toMatch(/-\d/);
@@ -867,11 +882,11 @@ describe('rules the garden exists to keep', () => {
 
     const before = await mountGarden();
     expect(stagesOf(before)).toEqual(['3']); // 8 pomodoros since planting
-    expect(before.gardenCount.textContent).toBe('0 tokens · 12 in the ground');
+    expect(shownTokens(before)).toBe('0');
 
     const after = await mountGarden();
     expect(stagesOf(after)).toEqual(['3']);
-    expect(after.gardenCount.textContent).toBe('0 tokens · 12 in the ground');
+    expect(shownTokens(after)).toBe('0');
     expect(gardenState()).toEqual(planted);
     expect(after.gardenHint.textContent).toBe('');
   });
@@ -893,22 +908,25 @@ describe('rules the garden exists to keep', () => {
 // of covering them apart from the others is that "alive" is exactly where a
 // garden card usually grows a care mechanic — see the last test in this block.
 describe('pets and the pond', () => {
+  // The pond is no longer among them, because a pond is not a thing you buy —
+  // it is land, and it becomes a pond when a fish goes in it. A carp stands in
+  // for it here: the stock, not the place.
   const PETS = [
     ['cat', 'Cat', 26],
     ['dog', 'Dog', 30],
-    ['pond', 'Fish pond', 36]
+    ['carp', 'Carp', 26]
   ];
 
   it('draws each of them as a real drawing, in its slot and on the shop shelf', async () => {
     seedSessions(pomodoros(100));
     seedGarden({
       spent: 92,
-      items: [item('cat', 100, 3, 0), item('dog', 100, 3, 1), item('pond', 100, 3, 2)]
+      items: [item('cat', 100, 3, 0), item('dog', 100, 3, 1), item('carp', 100, 3, 2)]
     });
     const els = await mountGarden();
 
     const drawn = plants(els);
-    expect(drawn.map((p) => p.getAttribute('data-kind'))).toEqual(['cat', 'dog', 'pond']);
+    expect(drawn.map((p) => p.getAttribute('data-kind'))).toEqual(['cat', 'dog', 'carp']);
     drawn.forEach((p) => {
       const svg = p.querySelector('svg.plant-svg');
       expect(svg).not.toBeNull();
@@ -926,63 +944,137 @@ describe('pets and the pond', () => {
   // The groups exist so the CSS can move one part without the rest sliding: the
   // dog walks on its legs and wags, the cat sits and flicks, the fish swim
   // inside a still pond.
-  it('exposes the groups each drawing has to be animated by', async () => {
-    seedSessions(pomodoros(100));
+  // Rewritten for the group contract every animal now shares. It used to look for
+  // `g.pet-walk` / `g.pet-sit` / `g.pet-tail`, which were per-animal names — so
+  // each animal had its own rig and the movement code had to know which. One
+  // structure for all of them is what lets a single walk cycle drive the lot.
+  it('gives every animal the same rig, with the shadow outside the bounce', async () => {
+    // Old enough that all of them are full grown.
+    seedSessions(pomodoros(400));
     seedGarden({
-      spent: 92,
-      items: [item('dog', 100, 3, 0), item('cat', 100, 3, 1), item('pond', 100, 3, 2)]
+      spent: 200,
+      items: [item('cow', 0, 3, 0), item('cow', 0, 3, 1), item('cow', 0, 3, 2)]
     });
-    const els = await mountGarden();
+    let els = await mountGarden();
 
-    const dog = slot(els, 3, 0).querySelector('span.plant');
-    expect(dog.querySelectorAll('g.pet-walk')).toHaveLength(1);
-    expect(dog.querySelectorAll('g.pet-tail')).toHaveLength(1);
-    // The tail rides inside the walking group, so a wag never detaches it.
-    expect(dog.querySelector('g.pet-walk g.pet-tail')).not.toBeNull();
+    for (const col of [0, 1, 2]) {
+      const a = slot(els, 3, col).querySelector('span.plant');
+      expect(a.querySelectorAll('g.stock-bob')).toHaveLength(1);
+      expect(a.querySelectorAll('g.stock-ink')).toHaveLength(1);
+      expect(a.querySelectorAll('g.stock-head')).toHaveLength(1);
+      expect(a.querySelectorAll('g.a-leg-a')).toHaveLength(1);
+      expect(a.querySelectorAll('g.a-leg-b')).toHaveLength(1);
+      // The outline wraps the parts, so a leg is inside it, not beside it.
+      expect(a.querySelector('g.stock-ink g.a-leg-a')).not.toBeNull();
+      expect(a.querySelector('g.stock-ink g.stock-head')).not.toBeNull();
+      // And the cast shadow is NOT inside the bob. A shadow that bounces with
+      // the animal is the single mistake that undoes the whole effect, and it is
+      // invisible in code review.
+      const shadow = a.querySelector('.t-s-shade');
+      expect(shadow).not.toBeNull();
+      expect(shadow.closest('g.stock-bob')).toBeNull();
+    }
 
-    const cat = slot(els, 3, 1).querySelector('span.plant');
-    expect(cat.querySelectorAll('g.pet-sit')).toHaveLength(1);
-    expect(cat.querySelectorAll('g.pet-tail')).toHaveLength(1);
-    expect(cat.querySelectorAll('g.pet-walk')).toHaveLength(0);
+    // Nothing the CSS animates may carry its own SVG transform attribute: a CSS
+    // transform REPLACES the attribute rather than composing with it, so such a
+    // group would silently lose its placement the moment it animated.
+    const animated = els.gardenPlot.querySelectorAll(
+      'g.stock-bob, g.stock-swim, g.stock-head, g.a-leg-a, g.a-leg-b, g.stock-tail');
+    expect(animated.length).toBeGreaterThan(0);
+    for (const g of animated) expect(g.hasAttribute('transform')).toBe(false);
 
-    const pond = slot(els, 3, 2).querySelector('span.plant');
-    expect(pond.querySelectorAll('g.pond-fish')).toHaveLength(2);
-    expect(pond.querySelectorAll('.t-water')).toHaveLength(1);
-    // The fish come with the water: selling them separately would need a
-    // placement rule to fail at, and this card has no failure states.
-    expect(pond.querySelectorAll('g.pet-walk, g.pet-sit')).toHaveLength(0);
+    // A fish swims instead of walking, and has no legs to swing.
+    localStorage.clear();
+    seedSessions(pomodoros(400));
+    seedGarden({ spent: 100, items: [item('carp', 0, 3, 0)] });
+    els = await mountGarden();
+    const fish = slot(els, 3, 0).querySelector('span.plant');
+    expect(fish.querySelectorAll('g.stock-swim')).toHaveLength(1);
+    expect(fish.querySelectorAll('g.a-leg-a, g.a-leg-b')).toHaveLength(0);
   });
 
-  it('never gives one a stage and never grows it, however many pomodoros land', async () => {
-    seedSessions(pomodoros(30));
+  // This used to assert the opposite — that an animal never has a stage. It was
+  // changed on purpose: an animal that arrives full grown was never raised, and
+  // it also gave livestock the cheapest rate on the farm, because it started
+  // producing the moment it was bought.
+  it('raises an animal from young to full grown, and pays nothing until it is', async () => {
+    // Two pomodoros old: every one of them is a long way from its `mature`.
+    seedSessions(pomodoros(2));
     seedGarden({
       spent: 92,
-      items: [item('cat', 0, 3, 0), item('dog', 0, 3, 1), item('pond', 0, 3, 2)]
+      items: [item('cat', 0, 3, 0), item('dog', 0, 3, 1), item('carp', 0, 3, 2)]
     });
-    const els = await mountGarden();
+    let els = await mountGarden();
 
-    const check = () => {
-      const drawn = plants(els);
-      expect(drawn).toHaveLength(3);
-      drawn.forEach((p) => {
-        expect(p.hasAttribute('data-stage')).toBe(false);
-        expect(p.classList.contains('plant-growing')).toBe(false);
-        expect(p.classList.contains('pl-decor')).toBe(true);
-      });
-      // No stage word, and no count of the work behind it, because there is
-      // nothing for a pet to be behind on. A producing one (the pond) appends
-      // what is ripe and waiting, so the name is read off the front.
-      expect(drawn.map((p) => p.title.split(' · ')[0])).toEqual(PETS.map(([, name]) => name));
-      drawn.forEach((p) => {
-        expect(p.title).not.toMatch(/seedling|sapling|young|full plant|in bloom|since planting/);
-      });
-    };
+    let drawn = plants(els);
+    expect(drawn).toHaveLength(3);
+    drawn.forEach((p) => {
+      expect(Number(p.getAttribute('data-stage'))).toBeLessThan(5);
+      expect(p.classList.contains('stock-young')).toBe(true);
+      // A young animal is drawn smaller, and the drawing is what says so.
+      // ART_SCALE is 1.34, so a full grown animal draws at scale(1.340 1.340).
+      // A young one has the stage ramp multiplied in, which puts it strictly
+      // below that — this is the assertion that caught the newborn animal being
+      // drawn at full size.
+      const drewAt = /scale\(([\d.]+) [\d.]+\)/.exec(p.innerHTML);
+      expect(drewAt).not.toBeNull();
+      expect(Number(drewAt[1])).toBeLessThan(1.34);
+      expect(Number(drewAt[1])).toBeGreaterThan(0.5);
+      // Sways are for plants. A swaying cow is a cow in a gale.
+      expect(p.classList.contains('plant-growing')).toBe(false);
+    });
+    // Nothing to collect off an animal that is not grown up, and nothing that
+    // says there is: no ripe marker, no harvest wording.
+    drawn.forEach((p) => {
+      expect(p.hasAttribute('data-ripe')).toBe(false);
+      expect(p.title).not.toMatch(/ready — press to harvest/);
+    });
+    expect(els.gardenPlot.querySelectorAll('circle.t-yield')).toHaveLength(0);
 
-    check();
-    seedSessions(pomodoros(200));
-    els.tabTimerBtn.click();
-    els.tabGardenBtn.click();
-    check();
+    // Long enough for all three to be full grown, and for the pond to have run
+    // several of its cycles.
+    localStorage.clear();
+    seedSessions(pomodoros(400));
+    seedGarden({
+      spent: 92,
+      items: [item('cat', 0, 3, 0), item('dog', 0, 3, 1), item('carp', 0, 3, 2)]
+    });
+    els = await mountGarden();
+
+    drawn = plants(els);
+    expect(drawn).toHaveLength(3);
+    drawn.forEach((p) => {
+      expect(p.getAttribute('data-stage')).toBe('5');
+      expect(p.classList.contains('stock-young')).toBe(false);
+      expect(p.classList.contains('pl-decor')).toBe(true);
+      // No plant vocabulary on an animal, whatever stage it is at.
+      expect(p.title).not.toMatch(/seedling|sapling|full plant|in bloom|since planting/);
+    });
+    // The name still reads off the front, and only the producing one is ripe.
+    expect(drawn.map((p) => p.title.split(' · ')[0])).toEqual(PETS.map(([, name]) => name));
+    const ripe = drawn.filter((p) => p.hasAttribute('data-ripe'));
+    expect(ripe).toHaveLength(1);
+    expect(ripe[0].getAttribute('data-kind')).toBe('carp');
+  });
+
+  it('grows an animal through every stage in order as the work lands', async () => {
+    // The cow is the slowest of them, so it is the one that shows every step.
+    const seen = [];
+    for (const done of [0, 6, 11, 16, 30]) {
+      localStorage.clear();
+      seedSessions(pomodoros(done));
+      seedGarden({ spent: 34, items: [item('cow', 0, 3, 0)] });
+      const els = await mountGarden();
+      seen.push(plants(els)[0].getAttribute('data-stage'));
+    }
+    // Monotonic, and it does reach the top: a ramp that never arrives would
+    // pass a "grows" test while never paying out.
+    expect(seen).toEqual([...seen].sort());
+    // Never stage 1. That is bare soil with a seed under it, which is the right
+    // picture for a crop and the wrong one for something you bought alive.
+    expect(seen[0]).toBe('2');
+    expect(seen[seen.length - 1]).toBe('5');
+    expect(seen).not.toContain('1');
   });
 
   it('charges each one like anything else, and then moves it for free', async () => {
@@ -994,7 +1086,7 @@ describe('pets and the pond', () => {
       shopBtn(els, kind).click();
       slot(els, 2, 0).click();
       expect(gardenState().spent).toBe(price);
-      expect(els.gardenCount.textContent).toBe((40 - price) + ' tokens · ' + price + ' in the ground');
+      expect(shownTokens(els)).toBe(String(40 - price));
 
       slot(els, 2, 0).click();
       slot(els, 2, 6).click();
@@ -1016,7 +1108,7 @@ describe('pets and the pond', () => {
       spent: 0, income: 0, basket: {}, parcels: 8,
       items: [
         item('dog', 0, 0, 0), item('cat', 0, 0, 1),
-        item('chicken', 0, 2, 0), item('cow', 0, 2, 5), item('pond', 0, 4, 0)
+        item('chicken', 0, 2, 0), item('cow', 0, 2, 5), item('carp', 0, 4, 0)
       ]
     });
     const els = await mountGarden();
@@ -1042,7 +1134,7 @@ describe('pets and the pond', () => {
     seedSessions(pomodoros(5, { date: daysAgoKey(300) })); // 300 days untended
     seedGarden({
       spent: 92,
-      items: [item('cat', 0, 3, 0), item('dog', 0, 3, 1), item('pond', 0, 3, 2)]
+      items: [item('cat', 0, 3, 0), item('dog', 0, 3, 1), item('carp', 0, 3, 2)]
     });
     const els = await mountGarden();
 
@@ -1054,11 +1146,16 @@ describe('pets and the pond', () => {
     expect(els.viewGarden.querySelectorAll('[data-feed], [data-care], .pet-hungry, .pet-mood'))
       .toHaveLength(0);
     // Three hundred days away, and the pets are exactly as they were left.
-    // Cat and dog are companions with nothing to harvest, so their titles stay
-    // bare. The pond produces, so once it is ripe it says what is waiting.
-    expect(plants(els).map((p) => p.title.split(' · ')[0])).toEqual(['Cat', 'Dog', 'Fish pond']);
-    expect(plants(els)[0].title).toBe('Cat');
-    expect(plants(els)[1].title).toBe('Dog');
+    // Cat and dog are companions with nothing to harvest, so the only thing that
+    // can follow their name is how grown up they are. Checked as a whitelist
+    // rather than as a bare string, because the point of this test is that no
+    // word about need or mood ever appears — not that the title never grows.
+    expect(plants(els).map((p) => p.title.split(' · ')[0])).toEqual(['Cat', 'Dog', 'Carp']);
+    const allowedAfterName = ['newborn', 'growing', 'nearly grown', 'full grown'];
+    for (const p of plants(els).slice(0, 2)) {
+      const rest = p.title.split(' · ').slice(1);
+      for (const part of rest) expect(allowedAfterName).toContain(part);
+    }
     expect(els.gardenHint.textContent).toBe(''); // the stage says what you are doing, and you are not doing anything
   });
 });
@@ -1088,7 +1185,7 @@ describe('what the plot under a thing is made of', () => {
         item('chicken', 0, 2, 5),   // and another
         item('dog', 0, 4, 0),       // pets share
         item('cat', 0, 4, 1),
-        item('pond', 0, 4, 5)       // the pond IS the plot
+        item('carp', 0, 4, 5)       // a fish makes its parcel a pond
       ]
     });
     const els = await mountGarden();
@@ -1118,11 +1215,11 @@ describe('what the plot under a thing is made of', () => {
     seedSessions(pomodoros(200));
     const els = await mountGarden();
 
-    shopBtn(els, 'pond').click();
+    shopBtn(els, 'carp').click();
     slot(els, 0, 5).click();
     expect(groundOf(els, 0, 5)).toEqual(['plot-ground-water']);
 
-    slot(els, 0, 5).click();           // pick the pond up
+    slot(els, 0, 5).click();           // pick the fish up
     slot(els, 0, 6).click();           // put it down one plot over, same parcel
     expect(groundOf(els, 0, 5)).toEqual([]);
     expect(groundOf(els, 0, 6)).toEqual(['plot-ground-water']);
@@ -1166,7 +1263,7 @@ describe('opening new land', () => {
     buySign(els, 4).click();
     expect(gardenState().parcels).toBe(5);
     expect(gardenState().spent).toBe(40);
-    expect(els.gardenCount.textContent).toBe('20 tokens · 40 in the ground');
+    expect(shownTokens(els)).toBe('20');
 
     // What was bought is ordinary land now, with ten plots on it, and the next
     // one along costs more.
@@ -1200,7 +1297,7 @@ describe('opening new land', () => {
 
     buySign(els, 4).click();
     expect(localStorage.getItem(GARDEN_KEY)).toBeNull();
-    expect(els.gardenCount.textContent).toBe('4 tokens');
+    expect(shownTokens(els)).toBe('4');
     expect(els.gardenHint.textContent).toBe('');
   });
 
