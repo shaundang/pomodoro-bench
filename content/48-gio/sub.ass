@@ -1,0 +1,37 @@
+[Script Info]
+; Phụ đề burn cứng cho short "48 giờ".
+; MarginV 430 để chữ nằm TRÊN vùng UI của YouTube Shorts (tiêu đề, tên kênh, mô tả,
+; nút like/share ăn khoảng 20% dưới khung 1920px). Kiểm trên điện thoại thật trước
+; khi render hàng loạt — vùng UI đổi theo phiên bản app.
+; Chỉ một ngôn ngữ: audience 94,4% Việt Nam. Không burn hai thứ tiếng.
+Title: 48 gio
+ScriptType: v4.00+
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+YCbCr Matrix: TV.709
+PlayResX: 1080
+PlayResY: 1920
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Main,Arial,64,&H00FFFFFF,&H00FFFFFF,&H00101010,&H80000000,-1,0,0,0,100,100,0,0,1,5,3,2,90,90,430,1
+Style: Hi,Arial,64,&H0055E0FF,&H00FFFFFF,&H00101010,&H80000000,-1,0,0,0,100,100,0,0,1,5,3,2,90,90,430,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:02.40,Main,,0,0,0,,Luật Việt Nam cho tuần làm việc\Nbình thường tối đa {\rHi}48 giờ{\rMain}.
+Dialogue: 0,0:00:02.40,0:00:05.00,Main,,0,0,0,,Dữ liệu từ hai cuộc thế chiến nói:\Nquanh đúng mốc đó, giờ làm thêm {\rHi}mất giá{\rMain}.
+Dialogue: 0,0:00:05.00,0:00:08.60,Main,,0,0,0,,Công nhân sản xuất đạn ở Anh,\NThế chiến thứ nhất và thứ hai —
+Dialogue: 0,0:00:08.60,0:00:10.40,Main,,0,0,0,,phần lớn là phụ nữ.
+Dialogue: 0,0:00:10.40,0:00:13.00,Main,,0,0,0,,Nhà kinh tế học John Pencavel\Ndựng lại toàn bộ số liệu sản lượng.
+Dialogue: 0,0:00:13.00,0:00:16.00,Main,,0,0,0,,Quan hệ giữa giờ làm và sản lượng\N{\rHi}không phải một đường thẳng{\rMain}.
+Dialogue: 0,0:00:16.00,0:00:19.40,Main,,0,0,0,,Dưới một ngưỡng: làm thêm một giờ\Nđược thêm đúng một giờ sản lượng.
+Dialogue: 0,0:00:19.40,0:00:23.00,Main,,0,0,0,,Trên ngưỡng đó vẫn tăng — nhưng mỗi giờ\Ntạo ra {\rHi}ít hơn giờ trước nó{\rMain}.
+Dialogue: 0,0:00:23.00,0:00:25.80,Main,,0,0,0,,Ngưỡng nằm quanh\N{\rHi}48 đến 49 giờ một tuần{\rMain}.
+Dialogue: 0,0:00:25.80,0:00:28.40,Main,,0,0,0,,Một khảo sát độc lập ở Mỹ\Nnăm {\rHi}1942{\rMain} ra đúng con số 48.
+Dialogue: 0,0:00:28.40,0:00:31.00,Main,,0,0,0,,Và luật lao động Việt Nam cho tuần\Nbình thường tối đa 48 giờ.
+Dialogue: 0,0:00:31.00,0:00:33.40,Main,,0,0,0,,{\rHi}Trùng hợp thôi{\rMain} — luật không đặt\Ntheo nghiên cứu này.
+Dialogue: 0,0:00:33.40,0:00:38.00,Main,,0,0,0,,Nhưng cộng hạn mức làm thêm tối đa\Ncủa cả năm, bình quân là khoảng\N{\rHi}52 giờ một tuần{\rMain} — đã qua ngưỡng.
+Dialogue: 0,0:00:38.00,0:00:41.00,Main,,0,0,0,,Một điều tôi phải nói rõ: đây là\N{\rHi}kinh tế lao động{\rMain}, đo sản lượng —
+Dialogue: 0,0:00:41.00,0:00:42.60,Main,,0,0,0,,không phải khoa học thần kinh\Nvề sự tập trung.
+Dialogue: 0,0:00:42.60,0:00:44.40,Main,,0,0,0,,Giờ thêm vào vẫn tạo ra giá trị.\NChỉ là {\rHi}ngày càng ít{\rMain}.
