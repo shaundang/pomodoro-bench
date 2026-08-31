@@ -8,7 +8,8 @@ export const KEYS = {
   categories: 'pomodoroBench.categories.v1',
   timer: 'pomodoroBench.timer.v1',
   presets: 'pomodoroBench.customPresets.v1',
-  skillMarks: 'pomodoroBench.skillMarks.v1'
+  skillMarks: 'pomodoroBench.skillMarks.v1',
+  garden: 'pomodoroBench.garden.v1'
 };
 
 export function readJSON(key, fallback) {
@@ -27,3 +28,4 @@ export const tasks = () => readJSON(KEYS.tasks, []);
 export const categories = () => readJSON(KEYS.categories, []);
 export const customPresets = () => readJSON(KEYS.presets, []);
 export const skillMarks = () => readJSON(KEYS.skillMarks, {});
+export const garden = () => readJSON(KEYS.garden, null);

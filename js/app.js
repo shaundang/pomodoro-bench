@@ -7260,12 +7260,17 @@
   function buildBackupData(){
     return {
       app: 'pomodoro-bench',
-      version: 5,
+      version: 6,
       exportedAt: nowMs(),
       sessions: loadSessions(),
       tasks: loadTasks(),
       categories: loadCategories(),
-      presets: loadCustomPresets()
+      presets: loadCustomPresets(),
+      // The farm, which used to be the one thing a backup left behind. It is
+      // months of work made visible — land bought, animals raised from newborn,
+      // a basket half full — and it lived in localStorage only, so switching
+      // device or restoring a backup wiped it while every session survived.
+      garden: loadGarden()
     };
   }
 
@@ -7372,10 +7377,78 @@
       renderPresets();
     }
 
+    mergeIncomingGarden(data && data.garden);
+
     renderTasks();
+    // Also redraws the garden: renderGarden runs from refreshStats.
     refreshStats();
 
     return {addedSessions: addedSessions, addedTasks: addedTasks, addedCategories: addedCategories};
+  }
+
+  // Folds an incoming garden into the local one. Every rule here is chosen to
+  // be IDEMPOTENT, because a sync pull runs again and again over the same
+  // remote copy: anything summed would grow on every pull, so counters take
+  // the larger of the two rather than the total.
+  //
+  // Nothing local is ever removed or moved, which is the same promise the rest
+  // of the importer makes.
+  function mergeIncomingGarden(incoming){
+    if(!incoming || typeof incoming !== 'object') return 0;
+    var g = loadGarden();
+
+    // A plot can hold one thing. Where both sides planted on the same square
+    // the local plant stays and the incoming one is dropped rather than shoved
+    // to a free plot: a farm is arranged on purpose, and silently rearranging
+    // it is a worse surprise than one missing plant.
+    var taken = {}, ids = {};
+    g.items.forEach(function(it){ taken[it.row + ':' + it.col] = true; ids[it.id] = true; });
+
+    var added = 0, addedCost = 0;
+    var items = Array.isArray(incoming.items) ? incoming.items : [];
+    items.forEach(function(it){
+      if(!it || typeof it.kind !== 'string') return;
+      if(!(it.col >= 0 && it.col < GARDEN_COLS && it.row >= 0 && it.row < GARDEN_MAX_ROWS)) return;
+      if(it.id && ids[it.id]) return;
+      var at = it.row + ':' + it.col;
+      if(taken[at]) return;
+      var meta = shopItem(it.kind);
+      g.items.push({
+        id: it.id || generateId(),
+        kind: it.kind,
+        col: Math.floor(it.col),
+        row: Math.floor(it.row),
+        plantedAt: typeof it.plantedAt === 'number' ? it.plantedAt : nowMs(),
+        // Age is measured in pomodoros, not in time, so this number is what
+        // decides whether the plant arrives grown or as a seedling. Missing it
+        // would restart every imported plant from bare soil.
+        plantedSeeds: typeof it.plantedSeeds === 'number' ? Math.max(0, Math.floor(it.plantedSeeds)) : 0
+      });
+      ids[g.items[g.items.length - 1].id] = true;
+      taken[at] = true;
+      added += 1;
+      if(meta) addedCost += meta.price;
+    });
+
+    // What the imported plants cost, charged once — an item is only ever added
+    // once, so this stays idempotent. Without it the balance is
+    // `earned + income - spent` over a farm somebody else paid for, which
+    // hands out free tokens for every plant that arrives.
+    g.spent += addedCost;
+    if(typeof incoming.income === 'number' && incoming.income > g.income) g.income = Math.floor(incoming.income);
+    if(typeof incoming.parcels === 'number' && incoming.parcels > (g.parcels || 0)) g.parcels = Math.floor(incoming.parcels);
+
+    if(incoming.basket && typeof incoming.basket === 'object'){
+      Object.keys(incoming.basket).forEach(function(k){
+        var n = incoming.basket[k];
+        if(!PRODUCE[k] || typeof n !== 'number' || n <= 0) return;
+        n = Math.floor(n);
+        if(!(g.basket[k] > n)) g.basket[k] = n;
+      });
+    }
+
+    saveGarden(g);
+    return added;
   }
 
   // ---------- reset statistics (two-step confirm, no native dialogs) ----------

@@ -467,20 +467,32 @@ vẫn phải tự bấm sang mới thấy nó.
    *đứng chờ* ở giai đoạn nó đã tới — nghỉ một ngày, một tuần, một tháng đều
    không trừ gì cả.
 
-### Một lỗ hổng đã biết: vườn không nằm trong backup
+### Vườn nằm trong backup (đã sửa)
 
-**Bố cục khu vườn (`pomodoroBench.garden.v1`) KHÔNG được xuất trong
-Export/Import, và KHÔNG được sync qua Firebase.** `buildBackupData()` trong
-`js/app.js` chỉ đóng gói `sessions`, `tasks`, `categories`, `presets`; `js/sync.js`
-push đúng cái object đó, nên phía sync thiếu y như vậy.
-(`pomodoroBench.skillMarks.v1` hiện cũng đang bị để ngoài, nên đây là chuyện có
-tiền lệ, không phải một trường hợp lẻ.)
+**Bố cục khu vườn (`pomodoroBench.garden.v1`) được xuất trong Export/Import và
+sync qua Firebase.** `buildBackupData()` trả thêm `garden`, và `version` lên `6`.
+Trước đây nó bị để ngoài — đổi máy là mất sạch đất đã mua, con vật đã nuôi lớn và
+giỏ hàng, trong khi mọi phiên focus vẫn còn. Đó là thứ duy nhất trong app **không
+làm lại được bằng cách làm việc thêm**, nên nó phải đi theo backup.
 
-Hậu quả cụ thể: **đổi máy hoặc import một file backup sẽ không mang khu vườn
-theo.** Số token *kiếm được* thì tự tính lại đúng (nó rút từ `sessions`, mà
-`sessions` có trong backup) — nhưng `spent` và toàn bộ vị trí đã bày sẽ về rỗng,
-nên máy mới hiện toàn bộ pomodoro thành token chưa tiêu trên một luống đất trắng.
-Chưa sửa; ghi ra đây để không ai tưởng nó đã được sao lưu.
+Cách gộp khi import (`mergeIncomingGarden`), mọi luật đều chọn để **gọi lại nhiều
+lần vẫn ra một kết quả** — vì một lần pull sync chạy lại trên đúng bản remote đó
+hết lần này tới lần khác:
+
+- **Cây/vật nuôi**: gộp theo `id`, không xoá và không dời thứ đang có. Nếu hai máy
+  cùng trồng vào một ô thì **giữ cây của máy này**, bỏ cây đến sau — một khu vườn
+  được bày có chủ ý, tự động dời chỗ còn khó chịu hơn là thiếu một cây.
+- `plantedSeeds` (tuổi tính bằng pomodoro) đi theo cây, không thì cây trưởng thành
+  nhập về sẽ mọc lại từ đất trống.
+- **`spent`**: cộng đúng giá những món thực sự được nhập vào. Không cộng thì
+  `available = earned + income − spent` sẽ phát token miễn phí cho mỗi cây đến từ
+  máy khác; mà mỗi món chỉ được nhập một lần nên phép cộng này vẫn an toàn khi
+  pull lại.
+- **`income`, `parcels`, giỏ hàng**: lấy **số lớn hơn**, không cộng dồn — cộng dồn
+  thì mỗi lần pull lại phình ra.
+- Backup không có `garden` thì **không chạm gì tới khu vườn**.
+
+(`pomodoroBench.skillMarks.v1` thì vẫn đang để ngoài backup.)
 
 ## Pomodoro heatmap
 

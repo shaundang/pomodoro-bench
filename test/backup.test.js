@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { mountApp, addTaskViaForm } from './helpers/mountApp.js';
-import { tasks, sessions, categories } from './helpers/storage.js';
+import { tasks, sessions, categories, garden, KEYS } from './helpers/storage.js';
 
 describe('backup export/import (window.PomodoroBench)', () => {
   it('buildBackupData snapshots sessions, tasks, categories and custom presets', async () => {
@@ -9,11 +9,15 @@ describe('backup export/import (window.PomodoroBench)', () => {
 
     const data = window.PomodoroBench.buildBackupData();
     expect(data.app).toBe('pomodoro-bench');
-    expect(data.version).toBe(5);
+    expect(data.version).toBe(6);
     expect(data.tasks).toHaveLength(1);
     expect(data.categories).toEqual(['Learning', 'Work', 'Personal']);
     expect(Array.isArray(data.sessions)).toBe(true);
     expect(Array.isArray(data.presets)).toBe(true);
+    // The farm has to travel too, or restoring a backup keeps every session
+    // and quietly throws the whole garden away.
+    expect(data.garden).toMatchObject({ spent: expect.any(Number), income: expect.any(Number) });
+    expect(Array.isArray(data.garden.items)).toBe(true);
   });
 
   it('merges an incoming backup additively, without touching existing local items', async () => {
@@ -52,5 +56,93 @@ describe('backup export/import (window.PomodoroBench)', () => {
   it('rejects a backup with no sessions and no tasks', async () => {
     await mountApp();
     expect(() => window.PomodoroBench.applyIncomingBackup({ sessions: [], tasks: [] })).toThrow('invalid backup format');
+  });
+
+  // A farm is the one thing in here you cannot get back by working again: the
+  // land was paid for and the animals were raised over weeks.
+  describe('the garden', () => {
+    const seed = (g) => localStorage.setItem(KEYS.garden, JSON.stringify(g));
+    const remote = (over) => ({
+      sessions: [{ id: 'r1', date: '2024-01-01', category: 'Work', task: 'R', minutes: 25, timestamp: 1, status: 'completed', type: 'focus' }],
+      tasks: [],
+      garden: Object.assign({ spent: 0, income: 0, parcels: 0, basket: {}, items: [] }, over)
+    });
+
+    it('brings in plants from another device without moving the ones already there', async () => {
+      seed({ spent: 12, income: 0, parcels: 4, basket: {}, items: [
+        { id: 'local-1', kind: 'carrot', col: 0, row: 0, plantedAt: 1, plantedSeeds: 3 }
+      ] });
+      await mountApp();
+
+      window.PomodoroBench.applyIncomingBackup(remote({ items: [
+        { id: 'remote-1', kind: 'tomato', col: 1, row: 0, plantedAt: 1, plantedSeeds: 40 }
+      ] }));
+
+      const g = garden();
+      expect(g.items.map((i) => i.id).sort()).toEqual(['local-1', 'remote-1']);
+      const local = g.items.find((i) => i.id === 'local-1');
+      expect(local).toMatchObject({ kind: 'carrot', col: 0, row: 0, plantedSeeds: 3 });
+      // Age carries over, or an imported grown plant restarts as bare soil.
+      expect(g.items.find((i) => i.id === 'remote-1').plantedSeeds).toBe(40);
+    });
+
+    it('charges for what it imports, so a merge cannot hand out free tokens', async () => {
+      seed({ spent: 12, income: 0, parcels: 4, basket: {}, items: [] });
+      await mountApp();
+
+      window.PomodoroBench.applyIncomingBackup(remote({ spent: 500, items: [
+        { id: 'remote-1', kind: 'carrot', col: 3, row: 1, plantedAt: 1, plantedSeeds: 2 }
+      ] }));
+
+      const g = garden();
+      expect(g.spent).toBeGreaterThan(12);
+      // What arrived, not what the other device had spent in total: the remote
+      // 500 covers plants that were sold off there and are not in this farm.
+      expect(g.spent).toBeLessThan(500);
+    });
+
+    it('keeps the local plant when both devices used the same plot', async () => {
+      seed({ spent: 0, income: 0, parcels: 4, basket: {}, items: [
+        { id: 'local-1', kind: 'carrot', col: 2, row: 1, plantedAt: 1, plantedSeeds: 9 }
+      ] });
+      await mountApp();
+
+      window.PomodoroBench.applyIncomingBackup(remote({ items: [
+        { id: 'remote-1', kind: 'cow', col: 2, row: 1, plantedAt: 1, plantedSeeds: 9 }
+      ] }));
+
+      const g = garden();
+      expect(g.items).toHaveLength(1);
+      expect(g.items[0]).toMatchObject({ id: 'local-1', kind: 'carrot' });
+    });
+
+    it('takes the larger count rather than the sum, so pulling twice changes nothing', async () => {
+      seed({ spent: 0, income: 30, parcels: 5, basket: { egg: 2 }, items: [] });
+      await mountApp();
+
+      const incoming = remote({ income: 80, parcels: 7, basket: { egg: 5, mango: 1 }, items: [
+        { id: 'remote-1', kind: 'carrot', col: 4, row: 1, plantedAt: 1, plantedSeeds: 2 }
+      ] });
+      window.PomodoroBench.applyIncomingBackup(incoming);
+      const once = garden();
+      window.PomodoroBench.applyIncomingBackup(incoming);
+      const twice = garden();
+
+      expect(once).toMatchObject({ income: 80, parcels: 7, basket: { egg: 5, mango: 1 } });
+      // A sync pull runs over the same remote copy again and again: anything
+      // summed here would grow on every pull.
+      expect(twice).toEqual(once);
+    });
+
+    it('leaves the farm alone when a backup carries no garden at all', async () => {
+      seed({ spent: 12, income: 4, parcels: 6, basket: { egg: 1 }, items: [
+        { id: 'local-1', kind: 'carrot', col: 0, row: 0, plantedAt: 1, plantedSeeds: 3 }
+      ] });
+      await mountApp();
+
+      const before = garden();
+      window.PomodoroBench.applyIncomingBackup({ sessions: [{ id: 'r1', date: '2024-01-01', category: 'Work', task: 'R', minutes: 25, timestamp: 1, status: 'completed', type: 'focus' }], tasks: [] });
+      expect(garden()).toEqual(before);
+    });
   });
 });
