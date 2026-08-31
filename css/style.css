@@ -293,7 +293,7 @@ button{font-family:inherit;}
   .col-presets, .col-tasks{padding-left:1.35rem; padding-right:1.35rem;}
 }
 
-.col-presets h2, .col-tasks h2, .log-card h2, .breakdown-card h2, .heatmap-card h2, .insights-card h2, .skills-card h2{
+.col-presets h2, .col-tasks h2, .log-card h2, .breakdown-card h2, .heatmap-card h2, .insights-card h2, .skills-card h2, .garden-card h2{
   font-family:"Fraunces", Georgia, serif;
   font-weight:600;
   font-size:1rem;
@@ -871,7 +871,7 @@ button{font-family:inherit;}
 
 /* .card carries no padding of its own, so every card class has to be listed
    here or its content sits flush against the border. */
-.log-card, .breakdown-card, .heatmap-card, .insights-card, .skills-card{padding:1rem 1.1rem 1.1rem;}
+.log-card, .breakdown-card, .heatmap-card, .insights-card, .skills-card, .garden-card{padding:1rem 1.1rem 1.1rem;}
 #hourChart{width:100%; height:140px; display:block; cursor:crosshair;}
 .hour-chart-wrap{position:relative;}
 .hour-chart-tooltip{
@@ -1296,4 +1296,1631 @@ button{font-family:inherit;}
   .banner, .undo-toast, .backup-menu-panel, .ring-wrap-running{
     animation:none;
   }
+}
+
+/* ---- Garden ----
+   A place you build: a shop strip on top, a fixed four-row plot below it, and
+   one continuous scene that has to look like somewhere you would want to sit.
+   The drawings themselves come from js/app.js (drawPlant / drawDecor) as a
+   60x96 box per item; this file supplies every colour they use and the whole
+   world around them.
+
+   Three rules come from docs/motivation-evidence.md, and they are the reason
+   this looks the way it does rather than like a mobile game:
+
+   - An item you cannot afford yet is dimmed and still priced, and nothing —
+     no text, no red, no generated content — says how far short you are. A
+     reward drawn as the gap you failed to close is the worst-performing design
+     in the reward literature (free-choice d=-0.80 to -0.88), while a price you
+     can save toward is a menu, which is a different thing entirely.
+   - Nothing wilts and nothing decays, so no state here is ever coloured as
+     damage. There is no "sad plant" style in this file to be reached.
+   - Motion is ambient, never celebratory. The things that breathe are the
+     plants still growing and two butterflies crossing the sky; the amplitude
+     is a degree and a half. Visual prominence alone flips a reward signal's
+     sign (salient d=-0.78 vs non-salient d=+0.24), so the scene is alive
+     without ever announcing an achievement. */
+
+/* Six foliage palettes, one per category-colour slot, so a species always
+   grows in the same colours. Four tones each: `deep` is the mass in shade,
+   `base` the body, `light` the lit side, `bloom` the flowers.
+   Everything after the palettes is the scenery: sky, hills, soil, and the
+   non-foliage materials (stem, seed head, terracotta, timber, lamp glass)
+   the ornaments and the sunflower are drawn from. */
+:root{
+  --tree-0-deep:#2F6459; --tree-0-base:#4C8B80; --tree-0-light:#7FB3A6; --tree-0-bloom:#EAF6F0;
+  --tree-1-deep:#43742A; --tree-1-base:#6AA544; --tree-1-light:#9BC96F; --tree-1-bloom:#F6F3C9;
+  --tree-2-deep:#6E4780; --tree-2-base:#9A6BAE; --tree-2-light:#C79AD4; --tree-2-bloom:#F3E4F7;
+  --tree-3-deep:#8D6C22; --tree-3-base:#C39B3F; --tree-3-light:#E4C173; --tree-3-bloom:#FBF0CE;
+  --tree-4-deep:#3E7468; --tree-4-base:#63A093; --tree-4-light:#97C6BA; --tree-4-bloom:#E9F5F1;
+  --tree-5-deep:#A5546A; --tree-5-base:#D97F98; --tree-5-light:#EFAFC0; --tree-5-bloom:#FDE8EF;
+  --tree-bark:#A5876A;
+  --tree-bark-birch:#DCD6C8;
+  --tree-shadow:rgba(36,39,32,0.15);
+
+  /* Materials. The sunflower keeps a green stem and green leaves whatever
+     palette its head takes, and ornaments have no foliage at all, so these
+     live outside the six palettes rather than inside each of them. */
+  --stem-base:#5F9A47;
+  --stem-deep:#3F7031;
+  --seedhead:#5A3A1E;
+  --seedhead-light:#82552A;
+  --clay-base:#BE7157;
+  --clay-light:#D28D72;
+  --wood-base:#A5825C;
+  --wood-light:#C09C74;
+  --wood-deep:#7A5F42;
+  --lamp:#FBE7AC;
+  --lamp-glow:rgba(250,222,150,0.75);
+  --lamp-halo:rgba(250,222,150,0.20);
+
+  /* Scenery. Three sky stops rather than two, so the horizon can warm up
+     without the top of the card going pale. */
+  --sky-top:#BFD8EF;
+  --sky-mid:#DAE9F3;
+  --sky-bottom:#E6EBD3;
+  --sky-haze:rgba(224,231,205,0.93);
+  --lawn-deep:#C9D4B2;
+  --terrace-lip:#EFF3E3;
+  --terrace-shade:#C2CEAA;
+  --terrace:#DAE1C5;
+  --sky-sun:#FCEFC8;
+  --sky-sun-glow:rgba(252,231,180,0.50);
+  --hill-far:#C6D5C6;
+  --hill-near:#B1C5AC;
+  /* Transparent in daylight: the star layer is declared once, and only the
+     night theme gives it a colour. */
+  --star:transparent;
+  --cloud:#FCFDF7;
+  --soil-top:#B49B78;
+  --soil-bottom:#8E7752;
+  --soil-strip:#A78F6C;
+  --soil-edge:#C6B190;
+  /* Every plot is a visible tile of tilled earth, planted or not. */
+  --tile-top:#C0A57F;
+  --tile:#A68A64;
+  --tile-deep:#8B7050;
+  /* Kept as a token, no longer applied to a bed: a hard rim plus a cast shadow
+     is how a solid object resting on a surface is drawn, and it is what made
+     every plot read as a bread roll on a green cloth. The beds are masked
+     instead — see .plot-slot::after. */
+  --tile-relief:inset 0 -2px 3px rgba(58,44,26,0.20),
+                inset 0 1px 0 rgba(255,255,255,0.14),
+                0 2px 3px rgba(36,39,32,0.14);
+  /* Four ground materials, because a garden is not one surface. What a plot is
+     made of follows what is in it: a bed for anything that grows, trodden grass
+     for the animals, water for the pond, gravel for the ornaments. Before this
+     the cow stood in a vegetable bed and the fish pond was a puddle in one.
+     Yard is the terrace's own green, walked on: duller and darker than the
+     lawn, with the earth starting to show through. */
+  --yard-top:#C6CFA8; --yard:#B2BD90; --yard-deep:#96A377;
+  /* Gravel, warm grey so it belongs to the same afternoon as the soil. */
+  --path-top:#D7D3C4; --path:#C1BCAB; --path-deep:#A6A190;
+  /* The pond keeps the water colours its own drawing uses; the bank is damp
+     earth, a shade darker than a dry bed. */
+  --pond-bank:#A08B6C;
+  /* Land nobody has opened yet: unimproved grass, coarser and greyer than the
+     lawn, with stones still in it. */
+  --rough-top:#C3CBA6; --rough:#AFB98F; --rough-deep:#96A177;
+  /* The halo around something ready to pick. It has its own token because the
+     same alpha that reads as a hint of warmth over a daylit lawn reads as a
+     lantern over the night one, and this is not allowed to become the brightest
+     thing in the card. */
+  --ripe-halo:color-mix(in srgb, var(--yield) 30%, transparent);
+  --ripe-rim:color-mix(in srgb, var(--yield) 50%, transparent);
+
+  /* Produce standing ready. Warm and readable, and deliberately no brighter
+     than that: the thing it marks is a small errand, not a prize. */
+  --yield:#DB9E38;
+  --yield-glow:rgba(219,158,56,0.45);
+  --flutter-a:#DFA157;
+  --flutter-b:#D68CA4;
+  --flutter-body:rgba(52,44,32,0.65);
+
+  /* Companions and the pond. Kept to the same muted range as the foliage: a
+     saturated cartoon animal in this scene would read as a different product. */
+  --dog:#B98A5C;      --dog-deep:#8E653D;  --dog-light:#DCC09B;
+  --cat:#7E7A72;      --cat-deep:#5C5851;  --cat-light:#B6B2A8;
+  --chick:#E7DDC5;    --chick-deep:#C7B996; --chick-light:#F5EFDE;
+  --chick-comb:#BE4E38; --chick-foot:#C9994D;
+  --cow:#E9E5D9;      --cow-deep:#4C483F;  --cow-spot:#4C483F;
+  --cow-muzzle:#D8A79A; --horn:#D5CAAD;
+  --eye:#2A2720;      --nose:#8E5A55;
+  --stone:#B8B3A3;    --water:#7CA6B7;     --water-light:#A9CBD6;
+  --fish-a:#D98A4E;   --fish-b:#C7C0A6;
+}
+/* Night garden. Not the day scene darkened: the sun becomes a moon, the clouds
+   lose nearly all their contrast, stars appear, and the lantern stops being
+   decoration and becomes the brightest thing in the card. */
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --tree-0-deep:#2C5F57; --tree-0-base:#47837A; --tree-0-light:#6FA79A; --tree-0-bloom:#CFE6DC;
+    --tree-1-deep:#3C6B27; --tree-1-base:#5F9A3E; --tree-1-light:#8FC163; --tree-1-bloom:#E3E9B8;
+    --tree-2-deep:#634073; --tree-2-base:#8D62A2; --tree-2-light:#BC90CB; --tree-2-bloom:#E2CFEA;
+    --tree-3-deep:#82631E; --tree-3-base:#B78F38; --tree-3-light:#DBB765; --tree-3-bloom:#F0E2B8;
+    --tree-4-deep:#386B60; --tree-4-base:#5A9587; --tree-4-light:#8CBDB0; --tree-4-bloom:#DCEDE7;
+    --tree-5-deep:#984C61; --tree-5-base:#CE7389; --tree-5-light:#E7A2B5; --tree-5-bloom:#F6D9E3;
+    --tree-bark:#8A6E52;
+    --tree-bark-birch:#C9C2B2;
+    --tree-shadow:rgba(0,0,0,0.36);
+
+    --stem-base:#548A3F;
+    --stem-deep:#37622A;
+    --seedhead:#4A2F18;
+    --seedhead-light:#6E4822;
+    --clay-base:#A45C46;
+    --clay-light:#B87558;
+    --wood-base:#8A6B49;
+    --wood-light:#A2825C;
+    --wood-deep:#5F4A33;
+    --lamp:#FFEBB6;
+    --lamp-glow:rgba(255,216,140,0.95);
+    --lamp-halo:rgba(255,216,140,0.26);
+
+    --sky-top:#131E2E;
+    --sky-mid:#1A2A3C;
+    --sky-bottom:#1A2320;
+    --sky-haze:rgba(26,35,29,0.93);
+    --lawn-deep:#141B16;
+    --terrace-lip:#3C4939;
+    --terrace-shade:#141B15;
+    --terrace:#1E2720;
+    --sky-sun:#DAE3EF;
+    --sky-sun-glow:rgba(196,212,234,0.22);
+    --hill-far:#1D2A2B;
+    --hill-near:#212D25;
+    --star:rgba(233,240,255,0.85);
+    --cloud:#32404E;
+    --soil-top:#332C1E;
+    --soil-bottom:#231F15;
+    --soil-strip:#2E281C;
+    --soil-edge:#3E3728;
+    --tile-top:#3C3425;
+    --tile:#2F2819;
+    --tile-deep:#251F14;
+    --tile-relief:inset 0 -2px 3px rgba(0,0,0,0.4),
+                  inset 0 1px 0 rgba(255,255,255,0.06),
+                  0 2px 4px rgba(0,0,0,0.35);
+    --yard-top:#303B27; --yard:#26311F; --yard-deep:#1C2417;
+    --path-top:#47483E; --path:#3A3B32; --path-deep:#2D2E27;
+    --pond-bank:#2E2719;
+    --rough-top:#2A3123; --rough:#20271B; --rough-deep:#181E14;
+    --ripe-halo:color-mix(in srgb, var(--yield) 19%, transparent);
+    --ripe-rim:color-mix(in srgb, var(--yield) 30%, transparent);
+    --yield:#E7B759;
+    --yield-glow:rgba(231,183,89,0.5);
+    --flutter-a:#C9B884;
+    --flutter-b:#9BAEC4;
+    --flutter-body:rgba(232,236,224,0.5);
+
+    --dog:#9A7149;      --dog-deep:#6C4C2C;  --dog-light:#BCA07C;
+    --cat:#6A6760;      --cat-deep:#4A4741;  --cat-light:#95928C;
+    --chick:#C8BFA7;    --chick-deep:#A89B7E; --chick-light:#DDD6C1;
+    --chick-comb:#A94C37; --chick-foot:#A67E40;
+    --cow:#C7C3B7;      --cow-deep:#3A3730;  --cow-spot:#3A3730;
+    --cow-muzzle:#AF867E; --horn:#B1A78D;
+    --eye:#16130F;      --nose:#6E4642;
+    --stone:#53504A;    --water:#38505E;     --water-light:#517081;
+    --fish-a:#AE6E3D;   --fish-b:#98927E;
+  }
+}
+:root[data-theme="dark"]{
+  --tree-0-deep:#2C5F57; --tree-0-base:#47837A; --tree-0-light:#6FA79A; --tree-0-bloom:#CFE6DC;
+  --tree-1-deep:#3C6B27; --tree-1-base:#5F9A3E; --tree-1-light:#8FC163; --tree-1-bloom:#E3E9B8;
+  --tree-2-deep:#634073; --tree-2-base:#8D62A2; --tree-2-light:#BC90CB; --tree-2-bloom:#E2CFEA;
+  --tree-3-deep:#82631E; --tree-3-base:#B78F38; --tree-3-light:#DBB765; --tree-3-bloom:#F0E2B8;
+  --tree-4-deep:#386B60; --tree-4-base:#5A9587; --tree-4-light:#8CBDB0; --tree-4-bloom:#DCEDE7;
+  --tree-5-deep:#984C61; --tree-5-base:#CE7389; --tree-5-light:#E7A2B5; --tree-5-bloom:#F6D9E3;
+  --tree-bark:#8A6E52;
+  --tree-bark-birch:#C9C2B2;
+  --tree-shadow:rgba(0,0,0,0.36);
+
+  --stem-base:#548A3F;
+  --stem-deep:#37622A;
+  --seedhead:#4A2F18;
+  --seedhead-light:#6E4822;
+  --clay-base:#A45C46;
+  --clay-light:#B87558;
+  --wood-base:#8A6B49;
+  --wood-light:#A2825C;
+  --wood-deep:#5F4A33;
+  --lamp:#FFEBB6;
+  --lamp-glow:rgba(255,216,140,0.95);
+  --lamp-halo:rgba(255,216,140,0.26);
+
+  --sky-top:#131E2E;
+  --sky-mid:#1A2A3C;
+  --sky-bottom:#1A2320;
+  --sky-haze:rgba(26,35,29,0.93);
+  --lawn-deep:#141B16;
+  --terrace-lip:#3C4939;
+  --terrace-shade:#141B15;
+  --terrace:#1E2720;
+  --sky-sun:#DAE3EF;
+  --sky-sun-glow:rgba(196,212,234,0.22);
+  --hill-far:#1D2A2B;
+  --hill-near:#212D25;
+  --star:rgba(233,240,255,0.85);
+  --cloud:#32404E;
+  --soil-top:#332C1E;
+  --soil-bottom:#231F15;
+  --soil-strip:#2E281C;
+  --soil-edge:#3E3728;
+  --tile-top:#3C3425;
+  --tile:#2F2819;
+  --tile-deep:#251F14;
+  --tile-relief:inset 0 -2px 3px rgba(0,0,0,0.4),
+                inset 0 1px 0 rgba(255,255,255,0.06),
+                0 2px 4px rgba(0,0,0,0.35);
+  --yard-top:#303B27; --yard:#26311F; --yard-deep:#1C2417;
+  --path-top:#47483E; --path:#3A3B32; --path-deep:#2D2E27;
+  --pond-bank:#2E2719;
+  --rough-top:#2A3123; --rough:#20271B; --rough-deep:#181E14;
+  --ripe-halo:color-mix(in srgb, var(--yield) 19%, transparent);
+  --ripe-rim:color-mix(in srgb, var(--yield) 30%, transparent);
+  --yield:#E7B759;
+  --yield-glow:rgba(231,183,89,0.5);
+  --flutter-a:#C9B884;
+  --flutter-b:#9BAEC4;
+  --flutter-body:rgba(232,236,224,0.5);
+
+  --dog:#9A7149;    --dog-deep:#6C4C2C;  --dog-light:#BCA07C;
+  --cat:#6A6760;    --cat-deep:#4A4741;  --cat-light:#95928C;
+  --chick:#C8BFA7;  --chick-deep:#A89B7E; --chick-light:#DDD6C1;
+  --chick-comb:#A94C37; --chick-foot:#A67E40;
+  --cow:#C7C3B7;    --cow-deep:#3A3730;  --cow-spot:#3A3730;
+  --cow-muzzle:#AF867E; --horn:#B1A78D;
+  --eye:#16130F;    --nose:#6E4642;
+  --stone:#53504A;  --water:#38505E;   --water-light:#517081;
+  --fish-a:#AE6E3D;   --fish-b:#98927E;
+}
+
+/* ---- card head and stage ---- */
+.garden-title{margin:0;}
+/* The game screen. Positioning context for the two HUD bars and for the shop,
+   all of which are lifted out of flow and laid over the world; overflow:hidden
+   is what keeps the shop panel inside the screen instead of over the card. */
+.garden-stage{
+  position:relative;
+  margin-top:0.9rem;
+  overflow:hidden;
+  border-radius:14px;
+}
+.garden-hud{
+  position:absolute;
+  left:10px;
+  right:10px;
+  z-index:4;
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:0.5rem;
+  /* The bar is a frame, not a surface — only the pills inside it take a click,
+     so a scroll or a drag begun anywhere else still reaches the garden. */
+  pointer-events:none;
+}
+.garden-hud > *{pointer-events:auto;}
+.garden-hud-top{top:10px;}
+/* While the catalogue is open it covers the HUD, and at 95%% opacity the pills
+   underneath would otherwise ghost faintly through it. */
+.stage-shopping .garden-hud{opacity:0;}
+.garden-hud{transition:opacity 0.15s ease;}
+/* Along the bottom edge, and wrap-reverse so that when the hint grows long
+   enough to take the whole width the basket stays the lower of the two — the
+   one with a button in it should not be the one that moves. */
+.garden-hud-bottom{
+  bottom:10px;
+  align-items:flex-end;
+  flex-wrap:wrap-reverse;
+}
+.hud-tokens{
+  pointer-events:auto;
+  font-family:"JetBrains Mono", ui-monospace, monospace;
+  font-size:0.74rem;
+  font-variant-numeric:tabular-nums;
+  white-space:nowrap;
+  color:var(--ink);
+  /* Opaque rather than tinted: it has to stay legible over a bright noon sky
+     and over a night one, and those are very different backgrounds. */
+  background:color-mix(in srgb, var(--paper-raised) 88%, transparent);
+  border:1px solid var(--line);
+  border-radius:999px;
+  padding:0.25rem 0.7rem;
+  box-shadow:var(--shadow-float);
+  cursor:default;
+}
+.garden-hint{
+  margin:0;
+  max-width:46ch;
+  padding:0.25rem 0.75rem;
+  font-size:0.8rem;
+  line-height:1.45;
+  color:var(--ink-soft);
+  font-style:italic;
+  /* Over the garden rather than under it, so it carries its own backing — and an
+     opaque one, because it has to stay readable over daylit soil and over a
+     night garden, which are very different backgrounds. */
+  background:color-mix(in srgb, var(--paper-raised) 90%, transparent);
+  border:1px solid var(--line);
+  /* Not a pill: the hint wraps to two lines on a narrow stage, and a 999px
+     radius on a two-line box reads as a mistake. */
+  border-radius:12px;
+  box-shadow:var(--shadow-float);
+}
+/* The line is empty between actions, and an empty pill is a smudge on the
+   scene. Nothing else reserves its height, because the HUD is out of flow —
+   the stage cannot be pushed about by it either way. */
+.garden-hint:empty{display:none;}
+
+/* ---- the basket ----
+   What has been picked and not yet sold. A running total with a single action,
+   styled as a receipt rather than a reward: the produce colour appears once, as
+   the rule down its left edge, and nowhere else. */
+.garden-basket{
+  display:flex;
+  align-items:center;
+  flex-wrap:wrap;
+  gap:0.35rem 0.8rem;
+  padding:0.4rem 0.6rem 0.4rem 0.7rem;
+  border:1px solid var(--line);
+  border-left:2px solid var(--yield);
+  border-radius:0 10px 10px 0;
+  background:color-mix(in srgb, var(--paper-raised) 93%, transparent);
+  box-shadow:var(--shadow-float);
+  font-size:0.8rem;
+}
+.garden-basket[hidden]{display:none;}
+.basket-label{
+  flex:0 0 auto;
+  font-size:0.66rem;
+  letter-spacing:0.05em;
+  text-transform:uppercase;
+  color:var(--ink-soft);
+}
+.basket-rows{
+  display:flex;
+  flex-wrap:wrap;
+  gap:0.25rem 0.9rem;
+  flex:1 1 auto;
+  min-width:0;
+}
+.basket-row{display:inline-flex; align-items:baseline; gap:0.3rem;}
+/* Mono and tabular on both figures, so a basket of six kinds of produce reads
+   as a column of counts and values rather than as a sentence. */
+.basket-count, .basket-worth{
+  font-family:"JetBrains Mono", ui-monospace, monospace;
+  font-variant-numeric:tabular-nums;
+}
+.basket-count{font-size:0.76rem; font-weight:500;}
+.basket-worth{font-size:0.72rem; color:var(--ink-soft);}
+.basket-sell{flex:0 0 auto; margin-left:0.2rem;}
+
+/* ---- the shop ----
+   Behind a toggle, because there are now more than twenty things to buy across
+   seven categories and a flat strip of them above the plot took more room than
+   the garden did. Closed, the garden is the whole card. */
+.shop-toggle{
+  display:inline-flex;
+  align-items:center;
+  gap:0.4rem;
+  padding:0.35rem 0.85rem;
+  border:1px solid var(--line);
+  border-radius:999px;
+  background:color-mix(in srgb, var(--paper-raised) 90%, transparent);
+  color:var(--ink);
+  font-family:inherit;
+  font-size:0.82rem;
+  font-weight:500;
+  cursor:pointer;
+  box-shadow:var(--shadow-float);
+  transition:border-color 0.15s ease, background 0.15s ease, transform 0.12s ease;
+}
+.shop-toggle:hover{border-color:var(--line-strong);}
+.shop-toggle:active{transform:scale(0.96);}
+.shop-toggle[aria-expanded="true"]{
+  border-color:var(--accent);
+  background:var(--accent-soft);
+  font-weight:600;
+}
+/* The catalogue takes the whole screen while it is open. It sat below the stage
+   first and that was the wrong shape twice over: you had to look away from the
+   garden to shop for it, and thirty items in a strip is not a catalogue. Inset
+   from the edges so the frame of the game still shows around it, and near
+   enough to opaque that the garden behind stops competing for attention. */
+.shop-panel{
+  position:absolute;
+  inset:0;
+  z-index:6;
+  display:flex;
+  flex-direction:column;
+  padding:0.85rem;
+  /* Fully opaque, not a tint: at 95%% the garden showed through and the two
+     competed for the eye, which is the thing this panel exists to stop. */
+  background:var(--paper-raised);
+  /* Replays each time it is opened, since [hidden] resets animation state. */
+  animation:dropIn 0.16s ease both;
+}
+.shop-panel[hidden]{display:none;}
+.shop-panel-head{
+  flex:0 0 auto;
+  display:flex;
+  align-items:center;
+  gap:0.7rem;
+  padding:0 0.15rem 0.5rem;
+  border-bottom:1px solid var(--line);
+  /* The panel is as wide as the stage, but a catalogue read across 1100px is
+     not read at all — head and shelves share one centred column. */
+  width:100%;
+  max-width:820px;
+  margin-inline:auto;
+}
+.shop-panel-head h3{flex:1 1 auto;}
+/* The same balance the HUD shows, repeated because the panel covers the HUD.
+   Never a shortfall: the number stands alone and nothing here compares it to
+   the price of anything. */
+.shop-panel-tokens{
+  flex:0 0 auto;
+  font-family:"JetBrains Mono", ui-monospace, monospace;
+  font-size:0.74rem;
+  font-variant-numeric:tabular-nums;
+  color:var(--ink-soft);
+  white-space:nowrap;
+}
+.shop-panel-head h3{
+  margin:0;
+  font-family:"Fraunces", Georgia, serif;
+  font-weight:600;
+  font-size:0.95rem;
+  letter-spacing:-0.005em;
+}
+.shop-panel-close{flex:0 0 auto; font-size:1.3rem; line-height:1; padding:0.1rem 0.45rem;}
+/* One column of labelled shelves, scrolling inside the panel. */
+.garden-shop{
+  flex:1 1 auto;
+  min-height:0;
+  display:flex;
+  flex-direction:column;
+  gap:0.85rem;
+  padding:0.75rem 0.15rem 0.2rem;
+  width:100%;
+  max-width:820px;
+  margin-inline:auto;
+  overflow-y:auto;
+  scrollbar-width:thin;
+  scrollbar-color:var(--line-strong) transparent;
+}
+.shop-group{display:flex; flex-direction:column; gap:0.4rem;}
+/* Small caps rather than a heading weight: seven of these stacked would
+   otherwise shout louder than the things they label. */
+.shop-group-label{
+  margin:0;
+  font-family:"Work Sans", sans-serif;
+  font-size:0.64rem;
+  font-weight:600;
+  letter-spacing:0.07em;
+  text-transform:uppercase;
+  color:var(--ink-soft);
+}
+/* A grid rather than a wrapping row: in a panel this wide a row of five items
+   followed by a ragged second row of two reads as a mistake, while a grid reads
+   as a shelf. auto-fill keeps the tile size fixed and the column count fluid. */
+.shop-group-items{
+  display:grid;
+  grid-template-columns:repeat(auto-fill, minmax(4.1rem, 1fr));
+  gap:0.4rem;
+}
+.shop-group-items .shop-item{width:auto;}
+.shop-item{
+  flex:0 0 auto;
+  width:3.9rem;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:0.1rem;
+  padding:0.35rem 0.2rem 0.3rem;
+  border:1px solid var(--line);
+  border-radius:10px;
+  background:var(--paper-raised);
+  color:var(--ink);
+  cursor:pointer;
+  transition:border-color 0.15s ease, background 0.15s ease,
+             box-shadow 0.15s ease, transform 0.12s ease;
+}
+.shop-item:hover{border-color:var(--line-strong); transform:translateY(-1px);}
+.shop-item:focus-visible{outline:2px solid var(--focus-ring); outline-offset:3px;}
+.shop-item:active{transform:scale(0.95);}
+/* Fixed art box so all eleven items stand on one baseline whatever their
+   drawing is — a bench is wide and short, a cypress tall and thin. */
+.shop-art{
+  display:flex;
+  align-items:flex-end;
+  justify-content:center;
+  height:54px;
+  line-height:0;
+}
+.shop-art .plant-svg{width:34px; height:54px;}
+.shop-name{
+  font-size:0.68rem;
+  font-weight:500;
+  line-height:1.25;
+  text-align:center;
+}
+/* Monospace and tabular, so the eleven prices read as one column of numbers —
+   a price list — rather than as eleven unrelated labels. */
+.shop-price{
+  font-family:"JetBrains Mono", ui-monospace, monospace;
+  font-size:0.64rem;
+  font-variant-numeric:tabular-nums;
+  color:var(--ink-soft);
+  letter-spacing:0.02em;
+}
+/* Held: this is in your hand and the plot is waiting for it, so it is the one
+   loud thing on the shelf — accent border, accent wash, a ring, and the art
+   lifting gently as if carried. */
+.shop-item-held{
+  border-color:var(--accent);
+  background:var(--accent-soft);
+  box-shadow:0 0 0 2px var(--accent-glow), var(--shadow-float);
+  transform:translateY(-2px);
+}
+.shop-item-held .shop-name{font-weight:600;}
+.shop-item-held .shop-price{color:var(--ink);}
+.shop-item-held .shop-art{animation:shopHeldBob 1.9s ease-in-out infinite;}
+/* Not affordable yet. Dimmed and still priced, and deliberately styled as
+   "later" rather than as a failure: no warning colour, no strike-through, no
+   shortfall text. See the note at the top of this block. */
+.shop-item-locked{
+  opacity:0.4;
+  filter:saturate(0.55);
+  cursor:default;
+}
+.shop-item-locked:hover{border-color:var(--line); transform:none;}
+
+/* ---- the scene ----
+   The plot is not a fixed bed any more: tiers climb as the garden grows, the
+   highest tier is first in the DOM and tier 1 sits on the soil at the bottom,
+   and js/app.js scrolls this container to the bottom on first paint. So the
+   scene is a window onto a hillside rather than a whole picture, and the sky
+   has to stay put while the terraces move past it — hence `position: sticky`
+   on the sky rather than a band that scrolls away and is never seen again. */
+.garden-scene{
+  position:relative;
+  margin:0;
+  /* The stage of this tab, not a strip inside the card: it takes the full width
+     of the card and as much height as its content wants, floored so that even a
+     garden with nothing in it fills the tab, and capped so that a very tall one
+     scrolls instead of pushing the hint off the screen. */
+  min-height:min(480px, 62vh);
+  max-height:min(940px, 80vh);
+  overflow-y:auto;
+  overflow-x:hidden;
+  overscroll-behavior:contain;
+  border:1px solid var(--line);
+  border-radius:14px;
+  /* Continues the bottom stop of the sky gradient, so the band where no terrace
+     has reached yet is sky rather than a seam. */
+  background:var(--sky-bottom);
+  /* Own stacking context, so the sky/plot/soil z-indexes below cannot reach out
+     and interleave with anything else on the page. */
+  isolation:isolate;
+  scrollbar-width:thin;
+  scrollbar-color:var(--line-strong) transparent;
+}
+
+/* ---- sky ----
+   Sticky at the top of the scroll window and painted OVER the tiers, faded out
+   along its lower edge with a mask. Underneath the tiers was the obvious
+   arrangement and it was wrong: a terrace is opaque ground the full height of
+   its tier, so once the garden had grown past one screen the sky — with the sun,
+   the clouds and both butterflies in it — was covered completely and could only
+   be seen by scrolling to the very top, which is the one place the view never
+   starts. Over the top, faded, it reads as distance instead: the sky is always
+   there, and the tiers furthest up the hill dissolve into the haze.
+   One element carries five kinds of background layer, painted last-listed
+   first: base gradient, far hill, near hill, a haze that sinks both hills into
+   the horizon, the sun's glow, and stars — invisible by day, because --star is
+   transparent in the light theme. */
+.garden-sky{
+  position:sticky;
+  top:0;
+  z-index:3;
+  height:200px;
+  overflow:hidden;
+  /* Decorative and in front of the slots, so it must not eat their clicks. */
+  pointer-events:none;
+  -webkit-mask-image:linear-gradient(to bottom, #000 0 66%, transparent 100%);
+  mask-image:linear-gradient(to bottom, #000 0 66%, transparent 100%);
+  background:
+    radial-gradient(1.4px 1.4px at 11% 17%, var(--star), transparent),
+    radial-gradient(1.1px 1.1px at 23% 34%, var(--star), transparent),
+    radial-gradient(1.6px 1.6px at 34% 11%, var(--star), transparent),
+    radial-gradient(1.1px 1.1px at 47% 26%, var(--star), transparent),
+    radial-gradient(1.3px 1.3px at 61% 14%, var(--star), transparent),
+    radial-gradient(1.1px 1.1px at 71% 31%, var(--star), transparent),
+    radial-gradient(1.5px 1.5px at 84% 22%, var(--star), transparent),
+    radial-gradient(1.1px 1.1px at 93% 38%, var(--star), transparent),
+    radial-gradient(280px 190px at 88% -14%, var(--sky-sun-glow), transparent 72%),
+    linear-gradient(to bottom, transparent 0 68%, var(--sky-haze) 88%, var(--sky-bottom) 100%),
+    radial-gradient(34% 44% at 71% 100%, var(--hill-near) 0 99%, transparent 100%),
+    radial-gradient(48% 50% at 24% 100%, var(--hill-far) 0 99%, transparent 100%),
+    linear-gradient(to bottom, var(--sky-top), var(--sky-mid) 54%, var(--sky-bottom));
+}
+.sky-sun{
+  position:absolute;
+  top:20px; right:8%;
+  width:28px; height:28px;
+  border-radius:50%;
+  background:radial-gradient(circle at 34% 32%,
+    color-mix(in srgb, var(--sky-sun) 70%, #fff), var(--sky-sun) 70%);
+  box-shadow:0 0 0 8px color-mix(in srgb, var(--sky-sun) 40%, transparent),
+             0 0 0 17px color-mix(in srgb, var(--sky-sun) 16%, transparent),
+             0 0 26px 10px color-mix(in srgb, var(--sky-sun) 34%, transparent);
+}
+/* A second, much wider halo, breathing on a very slow cycle — the only thing in
+   the sky that changes brightness, and it changes it by a few percent. */
+.sky-sun::before{
+  content:'';
+  position:absolute;
+  inset:-30px;
+  border-radius:50%;
+  background:radial-gradient(circle,
+    color-mix(in srgb, var(--sky-sun) 26%, transparent), transparent 68%);
+  animation:sunBreathe 11s ease-in-out infinite;
+}
+/* Three blobs per cloud — the element plus its two pseudo-elements — so a cloud
+   has a silhouette instead of being a lozenge. */
+.cloud, .cloud::before, .cloud::after{
+  position:absolute;
+  background:var(--cloud);
+  border-radius:999px;
+}
+.cloud{
+  opacity:0.9;
+  filter:blur(0.5px);
+  /* Drifting sideways rather than crossing: a cloud that leaves the frame is a
+     cloud missing from the composition for most of its loop. */
+  animation:cloudDrift 54s ease-in-out infinite alternate;
+}
+.cloud::before, .cloud::after{content:'';}
+/* Kept clear of the HUD pill in the top-left corner: overlapping it, a cloud
+   read as a second, half-drawn pill rather than as weather. */
+.cloud-a{width:62px; height:15px; top:74px; left:11%;}
+.cloud-a::before{width:31px; height:24px; left:10px; top:-11px;}
+.cloud-a::after{width:21px; height:18px; left:36px; top:-7px;}
+.cloud-b{width:40px; height:11px; top:58px; left:38%; opacity:0.62; animation-duration:78s;}
+.cloud-b::before{width:21px; height:16px; left:6px; top:-8px;}
+.cloud-b::after{width:14px; height:12px; left:24px; top:-5px;}
+.cloud-c{
+  width:74px; height:16px; top:14px; left:52%;
+  animation-duration:66s;
+  animation-direction:alternate-reverse;
+}
+.cloud-c::before{width:36px; height:26px; left:12px; top:-13px;}
+.cloud-c::after{width:24px; height:19px; left:43px; top:-8px;}
+
+/* ---- butterflies ----
+   Two of them, drawn entirely in CSS because no markup can be added here: the
+   span is the body (a narrow radial-gradient oval), its two pseudo-elements are
+   the wings. The crossing animates `left`, not a transform, for two reasons: a
+   percentage in translateX() is a percentage of the butterfly rather than of the
+   scene, and `transform` has to stay free for the bob — two animations on the
+   same property replace one another instead of composing. */
+.flutter{
+  --fw:17px;
+  position:absolute;
+  z-index:2;
+  width:32px;
+  height:21px;
+  /* Body and head in one layer: a long thin abdomen with a rounder head above
+     it. At the old size — 26px across with a 4px oval for a body — the whole
+     thing read as two coloured specks, so it is larger, and the parts that say
+     "insect" rather than "smudge" are the ones that got the pixels. */
+  background:
+    radial-gradient(closest-side ellipse, var(--flutter-body) 0 72%, transparent 74%),
+    radial-gradient(closest-side ellipse, var(--flutter-body) 0 72%, transparent 74%);
+  background-size:5px 13px, 5.5px 5.5px;
+  background-position:center 62%, center 6%;
+  background-repeat:no-repeat;
+  pointer-events:none;
+}
+.flutter::before, .flutter::after{
+  content:'';
+  position:absolute;
+  top:0;
+  width:var(--fw);
+  height:14px;
+  background:linear-gradient(150deg,
+    color-mix(in srgb, var(--flutter-wing) 82%, #fff),
+    var(--flutter-wing) 62%,
+    color-mix(in srgb, var(--flutter-wing) 78%, #000 12%));
+  opacity:0.94;
+}
+/* Two lobes per side, which is what makes it a butterfly rather than a blob:
+   the pseudo-element is the forewing, and its own box-shadow — an offset copy of
+   the same rounded shape, a little smaller and a shade deeper — is the hindwing
+   below it. There is no third pseudo-element available to draw one with, and a
+   single lozenge per side is exactly what read as a coloured speck. A clipped
+   polygon was tried first and came out as a six-pointed star: at seventeen
+   pixels a notch cut into a wing is two pixels of nothing. */
+.flutter::before{
+  border-radius:66% 34% 46% 54% / 74% 62% 38% 26%;
+  box-shadow:-1px 7px 0 -3px color-mix(in srgb, var(--flutter-wing) 82%, #000 14%);
+}
+.flutter::after{
+  border-radius:34% 66% 54% 46% / 62% 74% 26% 38%;
+  box-shadow:1px 7px 0 -3px color-mix(in srgb, var(--flutter-wing) 82%, #000 14%);
+}
+/* Mirrored origins, so both wings fold in toward the body, and the right wing's
+   shape is mirrored by writing its border-radius backwards rather than with
+   scaleX(-1). The scale was the obvious way and it was wrong: a negative scaleX
+   about `left center` reflects the wing across the body's centre line, so it
+   landed exactly on top of the left wing and the butterfly rendered as one
+   lopsided blob. */
+.flutter::before{
+  right:54%;
+  transform-origin:right center;
+  animation:flutterWingL 0.26s ease-in-out infinite alternate;
+}
+.flutter::after{
+  left:54%;
+  transform-origin:left center;
+  animation:flutterWingR 0.26s ease-in-out infinite alternate;
+}
+.flutter-a{
+  --flutter-wing:var(--flutter-a);
+  top:31%;
+  animation:flutterCross 34s linear -6s infinite, flutterBob 4.6s ease-in-out infinite;
+}
+/* The second one used to cross at 62% of the sky, which is where the sky's own
+   fade-out mask starts, so it spent its whole crossing half dissolved. */
+.flutter-b{
+  --flutter-wing:var(--flutter-b);
+  --fw:14px;
+  top:44%;
+  width:27px;
+  height:18px;
+  animation:flutterCross 47s linear -25s infinite, flutterBob 6.1s ease-in-out infinite;
+}
+.flutter-b::before, .flutter-b::after{height:12px; animation-duration:0.31s;}
+.flutter-b{background-size:4px 10px, 4.4px 4.4px;}
+
+@keyframes flutterCross{
+  0%  { left:-7%;  opacity:0; }
+  5%  { opacity:0.95; }
+  94% { opacity:0.95; }
+  100%{ left:105%; opacity:0; }
+}
+@keyframes flutterBob{
+  0%, 100%{ transform:translateY(0) rotate(-5deg); }
+  22%     { transform:translateY(-13px) rotate(4deg); }
+  46%     { transform:translateY(4px) rotate(-3deg); }
+  70%     { transform:translateY(-8px) rotate(5deg); }
+}
+/* Folding to 60% rather than to nothing: at this size a wing caught at the end
+   of its stroke still has to look like a wing rather than like a stray pixel. */
+@keyframes flutterWingL{
+  from{ transform:scaleX(1) rotate(-15deg); }
+  to  { transform:scaleX(0.55) rotate(3deg); }
+}
+@keyframes flutterWingR{
+  from{ transform:scaleX(1) rotate(15deg); }
+  to  { transform:scaleX(0.55) rotate(-3deg); }
+}
+@keyframes cloudDrift{
+  from{ transform:translateX(-16px); }
+  to  { transform:translateX(22px); }
+}
+@keyframes sunBreathe{
+  0%, 100%{ opacity:0.75; transform:scale(0.97); }
+  50%     { opacity:1;    transform:scale(1.05); }
+}
+@keyframes shopHeldBob{
+  0%, 100%{ transform:translateY(0); }
+  50%     { transform:translateY(-3px); }
+}
+
+/* ---- the plot ----
+   Ten equal tiles per tier, and as many tiers as the garden has grown. Every
+   tier is drawn identically, because with an unbounded stack there is no fixed
+   near-to-far order to scale against: the depth here comes from each tier's
+   ground occluding the one above it, not from size. */
+.garden-plot{
+  position:relative;
+  z-index:1;
+  display:flex;
+  flex-direction:column;
+  max-width:1040px;
+  margin:0 auto;
+  /* A gutter on the left that exists at every width, so the tier numbers below
+     always have somewhere to sit: keying them off the slack between the bed and
+     the scene worked only while the scene was at its full width, and clipped
+     them the moment the bed filled it. */
+  padding-left:1.7rem;
+  padding-right:0.3rem;
+}
+/* Each tier is a step cut into the hillside, not a bar hanging in front of a
+   lawn, and the step is the tier's OWN background rather than a shape drawn
+   under it. Two earlier attempts got this wrong and both are worth recording:
+   a short strip of soil beneath a row of plants, however carefully shaded,
+   reads as a shelf in a cabinet; and drawing the tread as an absolutely
+   positioned band tall enough to reach the tier below it silently added six
+   hundred pixels of phantom scroll, because an out-of-flow child still extends
+   a scroll container's scrollable area, so the "scroll to the ground on first
+   paint" in js/app.js landed on empty lawn.
+   Using the background instead costs nothing and cannot overflow: the lit lip
+   sits at the top of each tier's box, which is exactly where the plants of the
+   tier above stand, and the ground darkens away from it. The negative inline
+   margin with matching padding is what lets the step run out past both edges of
+   the bed and across the whole hill, so no vertical seam shows where it ends —
+   the scene clips the remainder. */
+.plot-row{
+  position:relative;
+  display:grid;
+  /* Ten columns for ten slots. The tier number is the row's first child but is
+     taken out of flow below, so it never takes a column and never shifts the
+     bed off centre. */
+  grid-template-columns:repeat(10, minmax(0, 1fr));
+  align-items:end;
+  margin-inline:-3.6rem;
+  padding-inline:3.6rem;
+  /* A lit lip, then five pixels of riser in shadow, then flat ground. Grading
+     the whole tier from light to dark instead turned the hillside into a set of
+     even stripes — a step is an edge, not a gradient. */
+  background:linear-gradient(to bottom,
+    var(--terrace-lip) 0 1.5px,
+    var(--terrace-shade) 1.5px 5px,
+    var(--terrace) 13px);
+  /* Local stacking context, so each slot's tile of earth can sit at z-index:-1
+     behind the plants without escaping the tier. Tier order needs nothing: the
+     DOM runs from the highest tier down to the ground, so each tier already
+     paints over the one above it. */
+  isolation:isolate;
+}
+/* The tier number: a way to navigate a garden that has grown tall, sitting out
+   in the margin at low contrast. Not a target and not a score — there is
+   nothing here it counts toward. */
+.tier-label{
+  position:absolute;
+  /* Measured from the row, which is inset by 3.6rem of its own padding, so this
+     lands just outside the first column and inside the scene. */
+  left:2.3rem;
+  bottom:5px;
+  font-family:"JetBrains Mono", ui-monospace, monospace;
+  font-size:0.62rem;
+  font-variant-numeric:tabular-nums;
+  line-height:1;
+  color:var(--ink-soft);
+  opacity:0.5;
+  pointer-events:none;
+}
+
+.plot-slot{
+  position:relative;
+  display:flex;
+  align-items:flex-end;
+  justify-content:center;
+  min-width:0;
+  /* One lever, because these two numbers can never be allowed to disagree: the
+     widest a drawing may be, and the room a plot reserves for it. A 60x96 box at
+     104px wide is 166px tall, and the drawings only use the middle of that box,
+     so a plot 10%% short of the full height is enough for everything except a
+     full-grown conifer, which leans a little into the row above. Whoever lays
+     the field out changes --plant-w and the height follows. */
+  --plant-w:104px;
+  min-height:calc(var(--plant-w) * 1.44);
+  padding:0 2px 9px;
+  border:none;
+  background:transparent;
+  color:inherit;
+  font:inherit;
+  cursor:pointer;
+  -webkit-tap-highlight-color:transparent;
+}
+/* Every plot is a visible tile of tilled earth whether or not something is
+   growing in it — a bed you can see, the way a 2D farm game draws one.
+   The note this file used to carry here said the opposite, that an empty plot
+   must be invisible, on the grounds that a grid of empty boxes reads as a
+   to-do list. What made that true was a fixed bed: forty tiles with eleven
+   planted is twenty-nine visible failures. It is not true here, because the
+   tiers grow as they fill and js/app.js always keeps empty ones above the
+   highest planted tier. There is no denominator anywhere in this card, so an
+   empty tile has nothing to be short of — it is room, not a gap. */
+.plot-slot::after{
+  content:'';
+  position:absolute;
+  z-index:-1;
+  left:50%;
+  bottom:0;
+  /* Sized from the cell, not from a fixed number of pixels, so the same tile
+     works in a wide shelf row and in a square plot: --bed-w is the one knob,
+     and the depth follows it unless a breakpoint overrides --bed-h. A bed
+     narrower than the plant standing in it was what made the plot read as a row
+     of rolls on a tray rather than as a piece of worked ground. */
+  --bed-w:min(70px, calc(100% - 22px));
+  width:var(--bed-w);
+  height:var(--bed-h, calc(var(--bed-w) / 2.5));
+  transform:translateX(-50%) rotate(var(--bed-tilt, 0deg));
+  background-image:
+    /* Empty in the resting state; the lifted marker fills it, because a mask
+       clips a box-shadow and the ring that used to mark this state cannot be
+       drawn around a bed whose edge has been dissolved on purpose. */
+    var(--bed-mark, none),
+    /* Clods: lit on one side, shadowed on the other. Evenly spaced vertical
+       hairlines were the first attempt at texture and they turned every tile
+       into a crate lid — regular lines are joinery, and earth is granular. */
+    radial-gradient(2.6px 2.6px at 17% 32%, rgba(255,255,255,0.26), transparent),
+    radial-gradient(2.4px 2.4px at 33% 64%, rgba(0,0,0,0.24), transparent),
+    radial-gradient(2.5px 2.5px at 51% 26%, rgba(255,255,255,0.20), transparent),
+    radial-gradient(2.2px 2.2px at 67% 70%, rgba(0,0,0,0.22), transparent),
+    radial-gradient(2.5px 2.5px at 83% 36%, rgba(255,255,255,0.22), transparent),
+    radial-gradient(2.1px 2.1px at 25% 82%, rgba(0,0,0,0.18), transparent),
+    radial-gradient(2.1px 2.1px at 75% 16%, rgba(0,0,0,0.18), transparent),
+    radial-gradient(2.3px 2.3px at 92% 68%, rgba(0,0,0,0.19), transparent),
+    radial-gradient(2.0px 2.0px at 44% 84%, rgba(255,255,255,0.15), transparent),
+    radial-gradient(2.2px 2.2px at 9% 62%, rgba(0,0,0,0.16), transparent),
+    /* Two shallow furrows across the bed, which is what says "turned over"
+       without drawing a single straight line. */
+    radial-gradient(58% 16% at 38% 74%, rgba(0,0,0,0.13), transparent 72%),
+    radial-gradient(46% 13% at 66% 52%, rgba(0,0,0,0.10), transparent 72%),
+    /* Damp shade where the bed meets the ground at the front. */
+    radial-gradient(74% 42% at 50% 104%,
+      color-mix(in srgb, var(--tile-deep) 78%, transparent), transparent 74%),
+    /* A ring of shade around the rim, which is what a hollow dug into ground
+       looks like, over a broad flat sheet of light. The old lighting was a dome
+       — brightest along the top edge, dark at the bottom — and a lit dome with
+       a hard rim is a bread roll however it is coloured. */
+    radial-gradient(closest-side ellipse at 50% 48%,
+      transparent 0 40%, color-mix(in srgb, var(--tile-deep) 50%, transparent) 100%),
+    radial-gradient(160% 260% at 50% -110%,
+      var(--tile-top), var(--tile) 56%, var(--tile-deep) 100%);
+  /* The edge is the whole problem. A rounded rectangle with a lit rim and a
+     drop shadow under it is a bread roll on a green cloth, whatever is drawn
+     inside it, because a hard outline plus a cast shadow is exactly how a solid
+     object sitting on a surface is drawn. So there is no outline and no cast
+     shadow any more: three overlapping soft ellipses, unioned by the default
+     mask compositing, dissolve the perimeter into the terrace, and the bed
+     reads as ground that has been dug rather than as an object placed on it.
+     The lumpiness is the point too — one ellipse came back out as a loaf. */
+  border-radius:var(--bed-shape, 42% 58% 46% 54% / 62% 66% 38% 34%);
+  filter:blur(1.2px);
+  transition:box-shadow 0.15s ease;
+}
+/* Ten identical stamps in a row is a tray of rolls again even after the edges
+   are soft, so the beds vary: a fraction of a degree of tilt and a couple of
+   pixels of width and depth, keyed off the column. Nothing here is random —
+   the same plot looks the same on every render. */
+.plot-slot:nth-of-type(3n+1)::after{--bed-tilt:-0.8deg; --bed-w:min(72px, calc(100% - 20px));}
+.plot-slot:nth-of-type(3n+2)::after{--bed-tilt:0.7deg;  --bed-w:min(66px, calc(100% - 26px));}
+.plot-slot:nth-of-type(4n+3)::after{--bed-tilt:1.1deg;  --bed-w:min(69px, calc(100% - 24px));}
+.plot-slot:nth-of-type(5n+4)::after{--bed-tilt:-0.4deg; --bed-w:min(73px, calc(100% - 18px));}
+/* ---- the four ground materials ----
+   What a plot is made of follows what is standing in it, and js/app.js says
+   which: .plot-ground-soil for anything that grows, -yard for the livestock,
+   -water for the pond, -path for the ornaments. An empty plot carries none of
+   them and stays a bed, which is right — an unplanted plot is ground waiting to
+   be planted. The geometry, the tilt, the soft edge and the blur are shared
+   above; only the material changes, so the four read as four surfaces in one
+   garden rather than as four widgets. */
+
+/* Trodden grass. The terrace's own green, walked on: duller, darker, with the
+   earth beginning to show through in the two places a hoof would put it. It has
+   to stay green — the cow used to stand in a vegetable bed, which is what made
+   the question "where do the animals actually live" worth asking. */
+.plot-ground-yard::after{
+  background-image:
+    var(--bed-mark, none),
+    /* Tufts left standing, and the wear between them. */
+    radial-gradient(2.4px 2.4px at 22% 30%, color-mix(in srgb, var(--yard-top) 60%, #fff), transparent),
+    radial-gradient(2.2px 2.2px at 58% 22%, color-mix(in srgb, var(--yard-top) 70%, #fff), transparent),
+    radial-gradient(2.2px 2.2px at 84% 42%, color-mix(in srgb, var(--yard-top) 60%, #fff), transparent),
+    radial-gradient(2.0px 2.0px at 40% 78%, rgba(0,0,0,0.14), transparent),
+    radial-gradient(2.0px 2.0px at 74% 74%, rgba(0,0,0,0.12), transparent),
+    /* Scuffed through to the ground, three times, off centre. */
+    radial-gradient(30% 42% at 31% 60%, color-mix(in srgb, var(--tile) 82%, transparent), transparent 78%),
+    radial-gradient(21% 30% at 67% 44%, color-mix(in srgb, var(--tile) 62%, transparent), transparent 80%),
+    radial-gradient(15% 22% at 50% 78%, color-mix(in srgb, var(--tile) 48%, transparent), transparent 80%),
+    /* Worn hardest around the edge, where the animals turn. */
+    radial-gradient(closest-side ellipse at 50% 48%,
+      transparent 0 34%, color-mix(in srgb, var(--yard-deep) 78%, transparent) 100%),
+    linear-gradient(to bottom,
+      var(--yard-top) 0 12%, var(--yard) 48%, var(--yard-deep) 100%);
+}
+/* The pond IS the plot. Water to the bank, a rim of damp earth where it meets
+   the tier, and two still highlights on it — anything smaller than the plot
+   read as a puddle standing on a flowerbed. */
+.plot-ground-water::after{
+  /* Wider and deeper than a bed, because the pond has to be bigger than the
+     drawing standing in it: at a bed's width the pond's own stone rim was the
+     widest thing in the plot and the whole plot read as a dish of water set down
+     on the grass. */
+  --bed-w:calc(100% - 6px);
+  --bed-h:calc(var(--bed-w) / 2.2);
+  background-image:
+    var(--bed-mark, none),
+    radial-gradient(26% 11% at 37% 34%,
+      color-mix(in srgb, var(--water-light) 62%, #fff), transparent 76%),
+    radial-gradient(17% 8% at 65% 58%,
+      color-mix(in srgb, var(--water-light) 46%, #fff), transparent 76%),
+    /* The bank, drawn over the water so the water sits inside it — thin, because
+       a wide one turns the pond back into a puddle in the middle of a plot. */
+    radial-gradient(closest-side ellipse at 50% 50%,
+      transparent 0 78%, var(--pond-bank) 92%,
+      color-mix(in srgb, var(--pond-bank) 80%, transparent) 100%),
+    /* Deeper toward the middle, and never a flat fill: still water is darkest
+       where it is deepest, which is the only cue at this size that says depth. */
+    radial-gradient(closest-side ellipse at 50% 42%,
+      color-mix(in srgb, var(--water-light) 78%, var(--water)) 0 16%,
+      var(--water) 58%, color-mix(in srgb, var(--water) 74%, #000) 100%);
+}
+/* Gravel: the part of the garden you walk on, and where a bench belongs. Flatter
+   and squarer than a bed — paving is laid, not dug — and cool enough against the
+   soil to separate from it at a glance without leaving the palette. */
+.plot-ground-path::after{
+  /* Flatter than a bed: paving is laid level, earth is heaped. */
+  --bed-h:calc(var(--bed-w) / 3);
+  border-radius:var(--bed-shape, 26% 30% 24% 28% / 46% 44% 40% 42%);
+  background-image:
+    var(--bed-mark, none),
+    /* Stones, of three sizes, none of them in a line. */
+    radial-gradient(2.8px 2.8px at 18% 34%, color-mix(in srgb, var(--path-top) 55%, #fff), transparent),
+    radial-gradient(2.2px 2.2px at 35% 66%, var(--path-deep), transparent),
+    radial-gradient(3.0px 3.0px at 52% 30%, color-mix(in srgb, var(--path-top) 70%, #fff), transparent),
+    radial-gradient(2.4px 2.4px at 68% 68%, var(--path-deep), transparent),
+    radial-gradient(2.6px 2.6px at 84% 38%, color-mix(in srgb, var(--path-top) 60%, #fff), transparent),
+    radial-gradient(2.0px 2.0px at 27% 80%, var(--path-deep), transparent),
+    radial-gradient(2.2px 2.2px at 77% 16%, rgba(0,0,0,0.16), transparent),
+    radial-gradient(2.4px 2.4px at 92% 70%, var(--path-deep), transparent),
+    radial-gradient(closest-side ellipse at 50% 48%,
+      transparent 0 46%, color-mix(in srgb, var(--path-deep) 72%, transparent) 100%),
+    linear-gradient(to bottom, var(--path-top) 0 10%, var(--path) 46%, var(--path-deep));
+  /* Less blur than a bed gets: gravel has edges, earth does not, and at a bed's
+     blur the stones vanished and the plot came back as a grey wash. */
+  filter:blur(0.7px);
+}
+
+/* Land not opened yet. Rough ground: tussocky, stony, never tilled, and never
+   marked as a failure — no lock, no padlock, no grey-out, nothing that counts
+   how many are still shut. Only one of them carries a price at a time, which is
+   js/app.js's decision, and the price is a price, not a shortfall. */
+.plot-slot-locked::after{
+  --bed-w:calc(100% - 6px);
+  --bed-h:calc(var(--bed-w) / 2.9);
+  background-image:
+    var(--bed-mark, none),
+    /* Tussocks standing in it, and stones nobody has picked out. */
+    radial-gradient(3.2px 3.2px at 22% 30%, color-mix(in srgb, var(--rough-top) 50%, #fff), transparent),
+    radial-gradient(2.6px 2.6px at 45% 60%, color-mix(in srgb, var(--stone) 88%, transparent), transparent),
+    radial-gradient(3.0px 3.0px at 69% 26%, color-mix(in srgb, var(--rough-top) 42%, #fff), transparent),
+    radial-gradient(2.4px 2.4px at 85% 62%, color-mix(in srgb, var(--stone) 70%, transparent), transparent),
+    radial-gradient(2.8px 2.8px at 13% 68%, rgba(0,0,0,0.16), transparent),
+    radial-gradient(2.4px 2.4px at 57% 16%, rgba(0,0,0,0.14), transparent),
+    radial-gradient(2.6px 2.6px at 34% 80%, rgba(0,0,0,0.13), transparent),
+    /* Flat and unworked. No dug rim and no lit crest: a hollow is what says
+       "planted in", and nobody has put a spade in this. */
+    linear-gradient(to bottom,
+      var(--rough-top) 0 30%, var(--rough) 66%, var(--rough-deep) 100%);
+  filter:blur(1px);
+}
+/* The one plot for sale. Slightly clearer than the rough ground behind it, the
+   way the next thing you might do should be — an invitation, not a target. */
+.plot-slot-next::after{
+  opacity:1;
+  --bed-mark:radial-gradient(120% 170% at 50% -20%,
+    color-mix(in srgb, var(--terrace-lip) 40%, transparent), transparent 74%);
+}
+/* The price. Same monospace as every other number in this card, on a small
+   backing so it stays legible against grass in either theme: it is what the
+   land costs, and there is nothing here it is short of. */
+.plot-price{
+  position:absolute;
+  z-index:2;
+  left:50%;
+  bottom:26%;
+  transform:translateX(-50%);
+  padding:1px 5px;
+  border-radius:999px;
+  background:color-mix(in srgb, var(--paper-raised) 82%, transparent);
+  font-family:"JetBrains Mono", ui-monospace, monospace;
+  font-size:0.66rem;
+  font-variant-numeric:tabular-nums;
+  line-height:1.35;
+  color:var(--ink-soft);
+  pointer-events:none;
+}
+/* Not affordable yet: dimmer, and that is the whole of it. Never red, never a
+   difference, never a lock — the same rule the shop follows. */
+.plot-slot-costly .plot-price{opacity:0.5;}
+.plot-slot-costly::after{opacity:0.9;}
+.plot-slot-locked{cursor:pointer;}
+.plot-slot-locked:hover::after{opacity:1;}
+
+/* ---- where a thing meets its ground ----
+   The near lip of the hole a plant stands in, drawn OVER the plant rather than
+   behind it: without this the drawing's own base shadow landed on the surface of
+   the bed and every species read as standing on the earth instead of growing out
+   of it. It cannot live on the plant itself — the plant lifts on hover and on
+   the ripe cycle, and ground that lifts with it is not ground. Each material
+   gets the version that belongs to it: soil buries a stem, grass and gravel only
+   take a contact shadow, because an animal stands on its yard and a bench sits
+   on its paving. */
+.plot-slot-filled::before{
+  content:'';
+  position:absolute;
+  z-index:2;
+  left:50%;
+  bottom:3px;
+  width:min(56px, calc(100% - 26px));
+  height:14px;
+  transform:translateX(-50%) rotate(var(--bed-tilt, 0deg));
+  background-image:
+    radial-gradient(1.4px 1.4px at 28% 40%, rgba(255,255,255,0.16), transparent),
+    radial-gradient(1.3px 1.3px at 62% 56%, rgba(0,0,0,0.16), transparent),
+    /* Lit along the crest, in shade below it. */
+    radial-gradient(66% 52% at 50% 4%,
+      color-mix(in srgb, var(--tile-top) 88%, #fff), transparent 76%),
+    radial-gradient(closest-side ellipse at 50% 26%,
+      var(--tile) 0 46%, var(--tile-deep) 100%);
+  -webkit-mask-image:radial-gradient(52% 96% at 50% 34%, #000 0 46%, rgba(0,0,0,0.5) 78%, transparent 100%);
+  mask-image:radial-gradient(52% 96% at 50% 34%, #000 0 46%, rgba(0,0,0,0.5) 78%, transparent 100%);
+  pointer-events:none;
+}
+/* Standing on it, not planted in it: a soft shadow where the feet are and
+   nothing else. At the soil lip's depth a cow read as a cow in a pit, which is
+   funny once and wrong afterwards. */
+.plot-ground-yard::before,
+.plot-ground-path::before{
+  z-index:0;
+  bottom:4px;
+  height:8px;
+  width:min(46px, calc(100% - 30px));
+  background-image:radial-gradient(closest-side ellipse at 50% 50%,
+    rgba(0,0,0,0.15) 0 30%, rgba(0,0,0,0.07) 68%, transparent 100%);
+  -webkit-mask-image:none;
+  mask-image:none;
+}
+/* In the water: the drawing's own reflection, dark and low, so the pond reads as
+   surface rather than as a picture of a pond laid on one. */
+.plot-ground-water::before{
+  z-index:0;
+  bottom:5px;
+  height:7px;
+  width:min(40px, calc(100% - 34px));
+  background-image:radial-gradient(closest-side ellipse at 50% 50%,
+    color-mix(in srgb, var(--water) 62%, #000) 0 30%,
+    color-mix(in srgb, var(--water) 40%, transparent) 72%, transparent 100%);
+  -webkit-mask-image:none;
+  mask-image:none;
+}
+/* Holding something: the empty tiles are the ones that can take it, so each
+   gets a ring that breathes. The ring is its own pseudo-element rather than a
+   box-shadow on the tile, and that is not a stylistic choice: pulsing the tile
+   itself meant pulsing its opacity, and a bed of earth fading in and out reads
+   as disabled, which is the opposite of the invitation. A ring can fade;
+   ground cannot. */
+.plot-armed .plot-slot:not(.plot-slot-filled)::before{
+  content:'';
+  position:absolute;
+  left:50%;
+  bottom:-2px;
+  width:min(76px, calc(100% - 2px));
+  height:32px;
+  transform:translateX(-50%);
+  border:1.5px solid var(--focus-ring);
+  border-radius:16px / 13px;
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--focus-ring) 24%, transparent);
+  pointer-events:none;
+  animation:slotInvite 2.6s ease-in-out infinite;
+  /* Reuses the per-slot stagger the plants sway on, so the invitation ripples
+     across the bed instead of blinking in lockstep. */
+  animation-delay:var(--sway-delay);
+}
+.plot-armed .plot-slot:not(.plot-slot-filled):hover::before{
+  border-color:var(--accent);
+  box-shadow:0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent);
+  animation:none;
+}
+.plot-slot-filled:hover .plant{transform:translateY(-2px);}
+/* Picked up and waiting for a spot: the tile it came from stays marked so it
+   can be put straight back. The mark is a wash of the accent across the bed
+   rather than a ring around it: the bed has no edge to ring any more. */
+.plot-slot-lifted::after{
+  --bed-mark:radial-gradient(120% 170% at 50% -20%,
+    color-mix(in srgb, var(--accent) 46%, transparent),
+    color-mix(in srgb, var(--accent) 16%, transparent) 62%, transparent 100%);
+}
+
+/* ---- plants ---- */
+.plant{
+  display:block;
+  line-height:0;
+  transform-origin:bottom center;
+  transition:transform 0.16s ease;
+}
+/* Three layers in a plot, and the drawing is the middle one: the ground is
+   behind it (z-index -1), the soil lip that buries its base is in front of it
+   (2), and the contact shadow a cow or a bench casts on grass or gravel sits
+   between (0). Without an explicit layer for the drawing the shadow landed on
+   top of it and the cat was buried to the chest, because a static flex item
+   paints under any positioned sibling. */
+.plot-slot .plant{position:relative; z-index:1;}
+.plant-svg{display:block; overflow:visible;}
+/* Wider than the slot on purpose. The drawings only use the middle 56%% or so
+   of their 60x96 box, so a drawing capped at the width of its own cell came out
+   as a speck standing in it — measured, a full-grown corn plant was 48px of art
+   in an 89px cell. The cell cannot simply be filled: at that aspect ratio a
+   drawing wide enough to fill one is half as tall again as the tier, so this is
+   a compromise, not a fix. Fourteen pixels of overhang buys about a sixth more
+   plant; the art still clears its neighbours, because the art is narrower than
+   the box it is drawn in. */
+.plot-slot .plant{width:calc(100% + 14px);}
+/* The width/height attributes in the markup are 46x74; this cap is what sets
+   the size in the bed, and min() with 100% is what lets a narrow screen shrink
+   the plants instead of overflowing the card. height:auto keeps the 60x96
+   viewBox ratio at whatever width it lands on. */
+.plot-slot .plant-svg{
+  width:min(100%, var(--plant-w));
+  height:auto;
+}
+/* Every render rebuilds the whole plot, so this replays for the whole bed, not
+   only for the plant just placed. That is why it is 0.3s and six percent of
+   scale and no more: at that size it reads as the garden settling, which is
+   what actually happened, instead of as forty things announcing themselves. */
+.plot-slot-filled .plant{animation:plantAppear 0.3s ease both;}
+/* Picked up and waiting for a spot: hovering off the ground, with the slot it
+   came from marked so it can be put straight back. */
+.plot-slot-lifted .plant{
+  opacity:0.85;
+  animation:plantLift 1.7s ease-in-out infinite;
+  filter:drop-shadow(0 4px 4px var(--tree-shadow));
+}
+
+.t-shadow{fill:var(--tree-shadow);}
+.t-bark{fill:var(--tree-bark);}
+.t-birch{fill:var(--tree-bark-birch);}
+.t-deep{fill:var(--pl-deep);}
+.t-base{fill:var(--pl-base);}
+.t-light{fill:var(--pl-light);}
+.t-bloom{fill:var(--pl-bloom);}
+/* Materials, shared between the sunflower and the four ornaments. */
+.t-stem{fill:var(--stem-base);}
+.t-stemdark{fill:var(--stem-deep);}
+.t-seedhead{fill:var(--seedhead);}
+.t-seedhead-light{fill:var(--seedhead-light);}
+.t-clay{fill:var(--clay-base);}
+.t-clay-light{fill:var(--clay-light);}
+.t-wood{fill:var(--wood-base);}
+.t-wood-light{fill:var(--wood-light);}
+.t-wood-dark{fill:var(--wood-deep);}
+/* The lantern is lit, so the glass carries its own light rather than only its
+   colour: a drop-shadow in the lamp colour, plus a very slow, very small
+   brightness cycle. It is the one warm point in the night scene. */
+.t-lamp{
+  fill:var(--lamp);
+  filter:drop-shadow(0 0 3px var(--lamp-glow));
+  animation:lampBreathe 5.6s ease-in-out infinite;
+}
+/* Drawn last in the markup, so it sits over the whole lantern — it has to stay
+   at a low alpha or it fogs the timber underneath it. */
+.t-lamp-halo{
+  fill:var(--lamp-halo);
+  animation:haloBreathe 5.6s ease-in-out infinite;
+}
+/* Produce waiting to be collected, drawn above a ripe plant or animal. Warm
+   enough to be noticed at a glance and lit from its own colour so it reads as
+   ripe rather than as an alert. */
+.t-yield{
+  fill:var(--yield);
+  filter:drop-shadow(0 0 2px var(--yield-glow));
+}
+/* Companions and the pond. */
+.t-dog{fill:var(--dog);}
+.t-dog-deep{fill:var(--dog-deep);}
+.t-dog-light{fill:var(--dog-light);}
+.t-cat{fill:var(--cat);}
+.t-cat-deep{fill:var(--cat-deep);}
+.t-cat-light{fill:var(--cat-light);}
+.t-chick{fill:var(--chick);}
+.t-chick-deep{fill:var(--chick-deep);}
+.t-chick-light{fill:var(--chick-light);}
+.t-chick-comb{fill:var(--chick-comb);}
+.t-chick-foot{fill:var(--chick-foot);}
+.t-cow{fill:var(--cow);}
+.t-cow-deep{fill:var(--cow-deep);}
+.t-cow-spot{fill:var(--cow-spot);}
+.t-cow-muzzle{fill:var(--cow-muzzle);}
+.t-horn{fill:var(--horn);}
+.t-eye{fill:var(--eye);}
+.t-nose{fill:var(--nose);}
+.t-stone{fill:var(--stone);}
+.t-water{fill:var(--water);}
+.t-water-light{fill:var(--water-light);}
+.t-fish-a{fill:var(--fish-a);}
+.t-fish-b{fill:var(--fish-b);}
+
+/* Companions move, which is the whole reason to own one — they are the only
+   things in the shop with nothing to harvest. Every one of these animates a
+   `transform` on a <g> that carries no SVG transform attribute of its own, so
+   there is nothing for the CSS transform to overwrite; `transform-box: fill-box`
+   is what makes the origins below mean the shape's own box rather than the
+   corner of the 60x96 viewBox.
+   All four idle on long cycles with most of the cycle spent still: an animal
+   that fidgets without pause reads as a loading spinner. */
+.pet-walk, .pet-peck, .pet-graze, .pet-sit, .pet-tail, .pond-fish{
+  transform-box:fill-box;
+}
+/* Pacing on the spot, a couple of pixels each way. */
+.pet-walk{
+  transform-origin:bottom center;
+  animation:petWalk 7.5s ease-in-out infinite;
+}
+/* Head down, a long pause, head down again. */
+.pet-peck{
+  transform-origin:bottom center;
+  animation:petPeck 5.5s ease-in-out infinite;
+}
+.pet-graze{
+  transform-origin:bottom center;
+  animation:petGraze 11s ease-in-out infinite;
+}
+/* Sitting still and breathing. */
+.pet-sit{
+  transform-origin:bottom center;
+  animation:petBreathe 4.4s ease-in-out infinite;
+}
+/* Tails attach at the body end of the shape, which for every animal drawn here
+   is the bottom-right of the tail's own box — except the cat, which sits facing
+   us with its tail curling away to the right, so its tail hinges bottom-left. */
+.pet-tail{
+  transform-origin:right bottom;
+  animation:petTail 1.6s ease-in-out infinite;
+}
+.pet-sit .pet-tail{
+  transform-origin:left bottom;
+  animation-duration:2.6s;
+}
+/* Two fish on different clocks, drifting rather than darting. */
+.pond-fish-a{animation:fishDriftA 9s ease-in-out infinite;}
+.pond-fish-b{animation:fishDriftB 13s ease-in-out infinite -3s;}
+
+@keyframes petWalk{
+  0%, 100%{ transform:translateX(-2.5px); }
+  46%     { transform:translateX(2.5px) translateY(-0.6px); }
+  50%     { transform:translateX(2.5px); }
+}
+@keyframes petPeck{
+  0%, 62%, 100%{ transform:rotate(0deg); }
+  70%          { transform:rotate(11deg); }
+  78%          { transform:rotate(2deg); }
+  86%          { transform:rotate(9deg); }
+}
+@keyframes petGraze{
+  0%, 55%, 100%{ transform:rotate(0deg); }
+  72%, 84%     { transform:rotate(7deg); }
+}
+@keyframes petBreathe{
+  0%, 100%{ transform:scaleY(1); }
+  50%     { transform:scaleY(1.025); }
+}
+@keyframes petTail{
+  0%, 100%{ transform:rotate(-7deg); }
+  50%     { transform:rotate(7deg); }
+}
+@keyframes fishDriftA{
+  0%, 100%{ transform:translate(0, 0); }
+  50%     { transform:translate(7px, 1.5px); }
+}
+@keyframes fishDriftB{
+  0%, 100%{ transform:translate(0, 0); }
+  50%     { transform:translate(-6px, -1.5px); }
+}
+
+.pl-0{--pl-deep:var(--tree-0-deep); --pl-base:var(--tree-0-base); --pl-light:var(--tree-0-light); --pl-bloom:var(--tree-0-bloom);}
+.pl-1{--pl-deep:var(--tree-1-deep); --pl-base:var(--tree-1-base); --pl-light:var(--tree-1-light); --pl-bloom:var(--tree-1-bloom);}
+.pl-2{--pl-deep:var(--tree-2-deep); --pl-base:var(--tree-2-base); --pl-light:var(--tree-2-light); --pl-bloom:var(--tree-2-bloom);}
+.pl-3{--pl-deep:var(--tree-3-deep); --pl-base:var(--tree-3-base); --pl-light:var(--tree-3-light); --pl-bloom:var(--tree-3-bloom);}
+.pl-4{--pl-deep:var(--tree-4-deep); --pl-base:var(--tree-4-base); --pl-light:var(--tree-4-light); --pl-bloom:var(--tree-4-bloom);}
+.pl-5{--pl-deep:var(--tree-5-deep); --pl-base:var(--tree-5-base); --pl-light:var(--tree-5-light); --pl-bloom:var(--tree-5-bloom);}
+/* Ornaments have no foliage, but the four palette variables still have to
+   resolve: an unset custom property makes `fill` invalid at computed-value
+   time, which lands as black rather than as nothing. */
+.pl-decor{
+  --pl-deep:var(--stem-deep);
+  --pl-base:var(--stem-base);
+  --pl-light:var(--wood-light);
+  --pl-bloom:var(--soil-edge);
+}
+
+/* Anything not yet at its last stage is still visibly on its way, so it is the
+   thing that moves. `transform-box: fill-box` with a bottom-centre origin is
+   what puts the rotation at the base of the plant rather than at the corner of
+   the 60x96 viewBox, and the animation is on the OUTER g.plant-sway on
+   purpose: a CSS transform replaces an SVG transform attribute outright rather
+   than composing with it, so animating g.plant-body would silently throw away
+   that plant's stage scale. */
+.plant-growing .plant-sway{
+  transform-box:fill-box;
+  transform-origin:bottom center;
+  animation:plantSway 6.4s ease-in-out infinite;
+  animation-delay:var(--sway-delay);
+}
+.plant-growing .plant-svg{
+  filter:drop-shadow(0 0 4px color-mix(in srgb, var(--pl-light) 32%, transparent));
+}
+/* Carrying produce. The old version of this was a 5px warm rim and a half-pixel
+   rise, and read as nothing at all: a ripe cow, chicken and pond showed a gold
+   dot two pixels across that looked like dust on the screen, and a ripe tree was
+   indistinguishable from an unripe one. Three changes, all of them light:
+
+   - the produce itself is drawn larger, through the SVG geometry properties, so
+     an egg or a cherry is a piece of fruit rather than a speck;
+   - a soft warm halo sits behind the whole drawing, low and wide, the way late
+     light sits on something ready to pick;
+   - the halo breathes, very slowly, a few percent.
+
+   What it deliberately is not: a badge, a count, a ring, a corner dot, anything
+   red, anything that pulses fast enough to catch the eye against your will.
+   Visual prominence alone flips a reward signal's sign (salient d=-0.78 vs
+   non-salient d=+0.24), so this has to be findable when you look for it and
+   invisible when you are not. Nothing here says late, behind, or unclaimed —
+   produce keeps banking up whether it is picked today or in a week. */
+.plant-ripe{animation:ripeLift 3.8s ease-in-out infinite;}
+.plant-ripe .plant-svg{
+  filter:drop-shadow(0 0 7px var(--ripe-rim))
+         drop-shadow(0 0 2px color-mix(in srgb, var(--ripe-rim) 76%, transparent));
+}
+/* The halo. Behind the drawing and behind the soil lip, so it reads as light in
+   the air around the plant rather than as a shape drawn on top of it. */
+.plant-ripe::before{
+  content:'';
+  position:absolute;
+  z-index:-1;
+  left:50%;
+  bottom:2px;
+  width:100%;
+  height:72%;
+  transform:translateX(-50%);
+  border-radius:50%;
+  background:radial-gradient(closest-side ellipse at 50% 62%,
+    var(--ripe-halo) 0 34%,
+    color-mix(in srgb, var(--ripe-halo) 44%, transparent) 66%, transparent 100%);
+  pointer-events:none;
+  animation:ripeGlow 6.2s ease-in-out infinite;
+}
+/* The produce, drawn bigger when it is ready to take. `r` as a CSS property is
+   SVG2 geometry: where a browser does not support it the circles keep the radius
+   in their markup, which is the old behaviour rather than a broken one. The
+   blossom circles are only ever drawn on a ripe plant, so scoping by radius
+   alone would be enough — the .plant-ripe prefix is there to say why. */
+.plant-ripe circle.t-yield{
+  r:3.6px;
+  stroke:color-mix(in srgb, var(--yield) 55%, #fff);
+  stroke-width:0.7;
+}
+.plant-ripe circle.t-bloom{
+  r:2.9px;
+  /* Warmed toward the produce colour. At the plant's own bloom tone — which for
+     half the palettes is nearly white — a circle this size read as a highlight
+     blob stuck on the leaves rather than as something to pick. */
+  fill:color-mix(in srgb, var(--yield) 58%, var(--pl-bloom));
+  filter:drop-shadow(0 0 1.4px color-mix(in srgb, var(--yield) 60%, transparent));
+}
+
+@keyframes plantSway{
+  0%, 100%{ transform:rotate(-1.5deg); }
+  50%     { transform:rotate(1.5deg); }
+}
+@keyframes plantAppear{
+  from{ opacity:0.45; transform:translateY(3px) scale(0.94); }
+  to  { opacity:1;    transform:none; }
+}
+@keyframes plantLift{
+  0%, 100%{ transform:translateY(-4px); }
+  50%     { transform:translateY(-9px); }
+}
+@keyframes ripeLift{
+  0%, 100%{ transform:translateY(0); }
+  50%     { transform:translateY(-1.5px); }
+}
+/* Four percent of opacity over six seconds. Slow enough that it reads as light
+   changing rather than as something asking to be tapped. */
+@keyframes ripeGlow{
+  0%, 100%{ opacity:0.82; }
+  50%     { opacity:1; }
+}
+@keyframes slotInvite{
+  0%, 100%{ opacity:0.4; }
+  50%     { opacity:1; }
+}
+@keyframes lampBreathe{
+  0%, 100%{ opacity:0.88; }
+  50%     { opacity:1; }
+}
+@keyframes haloBreathe{
+  0%, 100%{ opacity:0.7; }
+  50%     { opacity:1; }
+}
+
+/* ---- soil ----
+   The ground tier 1 stands on, and the bottom of the scroll. Lighter grains
+   scattered through it so it reads as turned earth and not as a footer bar, with
+   a highlight along the top so the near edge has a lip. */
+.garden-soil{
+  position:relative;
+  z-index:2;
+  /* Deep enough to be the near path along the front of the garden, which is
+     also what gives the bottom HUD bar something to stand on instead of
+     covering the plants on tier 1. */
+  height:52px;
+  box-shadow:inset 0 3px 7px rgba(0,0,0,0.18);
+  background-image:
+    radial-gradient(1.6px 1.6px at 8% 58%, rgba(255,255,255,0.20), transparent),
+    radial-gradient(1.4px 1.4px at 19% 34%, rgba(255,255,255,0.14), transparent),
+    radial-gradient(1.6px 1.6px at 31% 68%, rgba(255,255,255,0.18), transparent),
+    radial-gradient(1.3px 1.3px at 44% 40%, rgba(255,255,255,0.13), transparent),
+    radial-gradient(1.7px 1.7px at 56% 62%, rgba(255,255,255,0.19), transparent),
+    radial-gradient(1.3px 1.3px at 68% 32%, rgba(255,255,255,0.13), transparent),
+    radial-gradient(1.6px 1.6px at 79% 66%, rgba(255,255,255,0.18), transparent),
+    radial-gradient(1.4px 1.4px at 91% 44%, rgba(255,255,255,0.14), transparent),
+    linear-gradient(to bottom,
+      var(--soil-edge) 0 1.5px,
+      var(--soil-top) 1.5px 30%,
+      var(--soil-bottom));
+}
+
+/* ---- responsive ----
+   The plot shrinks rather than scrolling sideways: the slots stay equal, the
+   plants cap at whatever a slot can hold, and nothing here ever widens the
+   page. */
+@media (max-width:720px){
+  .garden-sky{height:150px;}
+  /* Side by side, the hint and the basket need more width than a narrow stage
+     has, and the overflow:hidden on the stage clips whichever loses. Stacked
+     from the bottom edge upward, both stay whole. */
+  .garden-hud-bottom{
+    flex-direction:column-reverse;
+    align-items:flex-start;
+    gap:0.35rem;
+  }
+  .garden-hint{max-width:100%;}
+  .plot-slot{--plant-w:66px;}
+  .plot-slot::after{--bed-w:min(54px, calc(100% - 8px));}
+  .plot-slot-filled::before{width:min(42px, calc(100% - 18px)); height:11px; bottom:2px;}
+  .plot-ground-yard::before, .plot-ground-path::before{width:min(34px, calc(100% - 24px)); height:7px;}
+  .plot-ground-water::before{width:min(30px, calc(100% - 28px)); height:6px;}
+  .plot-armed .plot-slot:not(.plot-slot-filled)::before{width:min(62px, calc(100% - 2px)); height:26px;}
+  .sky-sun{width:22px; height:22px; top:14px;}
+  .cloud-c{display:none;}   /* three clouds crowd a narrow sky */
+  .cloud-b{top:48px;}
+}
+@media (max-width:520px){
+  .garden-shop{padding:0.5rem 0.45rem; gap:0.3rem;}
+  .shop-item{width:3.5rem;}
+  .shop-art{height:44px;}
+  .shop-art .plant-svg{width:28px; height:44px;}
+  .garden-sky{height:118px;}
+  .plot-slot{--plant-w:46px; padding-bottom:7px;}
+  .plot-slot::after{--bed-w:calc(100% - 4px); filter:blur(0.9px);}
+  .plot-slot-filled::before{width:min(28px, calc(100% - 10px)); height:8px; bottom:2px;}
+  .plot-ground-yard::before, .plot-ground-path::before{width:min(24px, calc(100% - 14px)); height:6px;}
+  .plot-ground-water::before{width:min(20px, calc(100% - 18px)); height:5px;}
+  .plot-armed .plot-slot:not(.plot-slot-filled)::before{width:100%; height:21px; border-radius:10px / 8px;}
+  .shop-group-items{gap:0.25rem;}
+  /* The tier numbers are the first thing to go: at this width their gutter is
+     worth more as two more millimetres of every slot. */
+  .tier-label{display:none;}
+  .garden-plot{padding-left:0.25rem; padding-right:0.25rem;}
+}
+
+@media (prefers-reduced-motion: reduce){
+  .plant-growing .plant-sway, .plot-slot-filled .plant, .plot-slot-lifted .plant,
+  .plot-armed .plot-slot:not(.plot-slot-filled)::before, .shop-item-held .shop-art,
+  .cloud, .sky-sun::before, .t-lamp, .t-lamp-halo, .plant-ripe, .plant-ripe::before,
+  .pet-walk, .pet-peck, .pet-graze, .pet-sit, .pet-tail, .pond-fish{
+    animation:none;
+  }
+  .plant, .shop-item, .plot-slot::after, .garden-hud, .shop-toggle{transition:none;}
+  .shop-panel{animation:none;}
+  /* Without the crossing animation the butterflies would simply park on the left
+     edge of the scene, so they are not part of a still garden at all. */
+  .flutter{display:none;}
 }

@@ -1,0 +1,712 @@
+/* ===========================================================================
+   The farm layer: parcels, paths, the world the camera moves over, and the
+   farmer walking on it.
+
+   This sits after the older garden rules on purpose, and overrides several of
+   them, because the layout changed underneath: land used to be shelves stacked
+   into a sky, then a flat grid of plots, and it is now PARCELS — ten plots each,
+   five across and two deep, standing apart with a dirt path between them.
+
+   The reason for parcels rather than one continuous grid is the only reason that
+   matters here: an unbroken field of identical tiles reads as shelving, and no
+   amount of tile detail fixes that. The paths are the structure. Everything
+   else in this file follows from wanting the paths to be the thing you see.
+
+   Two rules that shaped the whole file:
+   - A bed is ONE piece of tilled ground with rows in it, not ten separate soil
+     pills. Per-plot pills were what made the crops read as objects sitting on
+     bread rolls, so inside a bed the plot is an invisible hit target and the
+     parcel paints the earth.
+   - Nothing scrolls. The scene is a viewport and the world inside it is moved by
+     transform, so the camera can stay on the farmer.
+   ========================================================================== */
+
+.view-garden .garden-card{
+  /* The farm wants the width of the page; the card chrome around it should not
+     be competing for attention with it. */
+  padding: 0.9rem 0.9rem 1rem;
+}
+
+/* ---- palette -------------------------------------------------------------
+   Deliberately more saturated than the rest of the app. The app is a quiet
+   grey-green instrument and should stay that way; the farm is the one place
+   that is allowed to be a bright cartoon, because that is what makes it read as
+   somewhere to go rather than another panel of statistics. */
+.garden-stage{
+  --sky-hi: #7fc7f5;
+  --sky-lo: #cdeaff;
+  --far-field-a: #a8d96b;
+  --far-field-b: #8ec957;
+  --far-field-c: #c3e58a;
+  --far-tree: #4e9c4a;
+  --far-tree-dark: #3d8340;
+
+  --grass: #6ec24a;
+  --grass-hi: #86d45e;
+  --grass-lo: #55a437;
+  --grass-edge: #3f8a2a;
+
+  --path: #d8bb84;
+  --path-hi: #e6cd9c;
+  --path-lo: #bf9f66;
+
+  --tilled: #a9763f;
+  --tilled-hi: #bd8b50;
+  --tilled-lo: #8a5c2c;
+  --tilled-row: #96662f;
+
+  --water-top: #4fb8e8;
+  --water-bot: #2f96cc;
+  --water-rim: #7a5a34;
+
+  --sign-wood: #b9814a;
+  --sign-face: #f0dcae;
+
+  --farmer-shirt: #f26d5b;
+  --farmer-shirt-dark: #d2503f;
+  --farmer-skin: #f3c9a0;
+  --farmer-hat: #f0d27a;
+  --farmer-hat-dark: #cfae52;
+  --farmer-trouser: #4a6fa5;
+  --farmer-boot: #6b4a2c;
+}
+
+/* Night on the farm, not a different farm: the same hues held down in value so
+   every shape stays exactly as legible. Written once and applied from both the
+   explicit dark choice and the system default, so the toggle wins in either
+   direction and no token is ever defined for the first time inside a query. */
+:root[data-theme="dark"] .garden-stage{
+  --sky-hi: #16314f;
+  --sky-lo: #274a6b;
+  --far-field-a: #4a6b38;
+  --far-field-b: #3d5c2f;
+  --far-field-c: #587a42;
+  --far-tree: #2c5b31;
+  --far-tree-dark: #21472a;
+
+  --grass: #3c7233;
+  --grass-hi: #4a8a3d;
+  --grass-lo: #2e5a27;
+  --grass-edge: #21421c;
+
+  --path: #7a6647;
+  --path-hi: #8d7854;
+  --path-lo: #5d4d36;
+
+  --tilled: #6b4a28;
+  --tilled-hi: #7d5931;
+  --tilled-lo: #4d341b;
+  --tilled-row: #5c3f22;
+
+  --water-top: #2b6c92;
+  --water-bot: #1d4f6e;
+  --water-rim: #4a3a24;
+
+  --sign-wood: #7c5734;
+  --sign-face: #b2a077;
+
+  --farmer-shirt: #c4574a;
+  --farmer-shirt-dark: #9c4034;
+  --farmer-skin: #c9a37e;
+  --farmer-hat: #c2a75f;
+  --farmer-hat-dark: #a08842;
+  --farmer-trouser: #3a567f;
+  --farmer-boot: #543a22;
+}
+
+@media (prefers-color-scheme: dark){
+  :root[data-theme="dark"] .garden-stage,
+  :root:not([data-theme="light"]) .garden-stage{
+    --sky-hi: #16314f;
+    --sky-lo: #274a6b;
+    --far-field-a: #4a6b38;
+    --far-field-b: #3d5c2f;
+    --far-field-c: #587a42;
+    --far-tree: #2c5b31;
+    --far-tree-dark: #21472a;
+
+    --grass: #3c7233;
+    --grass-hi: #4a8a3d;
+    --grass-lo: #2e5a27;
+    --grass-edge: #21421c;
+
+    --path: #7a6647;
+    --path-hi: #8d7854;
+    --path-lo: #5d4d36;
+
+    --tilled: #6b4a28;
+    --tilled-hi: #7d5931;
+    --tilled-lo: #4d341b;
+    --tilled-row: #5c3f22;
+
+    --water-top: #2b6c92;
+    --water-bot: #1d4f6e;
+    --water-rim: #4a3a24;
+
+    --sign-wood: #7c5734;
+    --sign-face: #b2a077;
+
+    --farmer-shirt: #c4574a;
+    --farmer-shirt-dark: #9c4034;
+    --farmer-skin: #c9a37e;
+    --farmer-hat: #c2a75f;
+    --farmer-hat-dark: #a08842;
+    --farmer-trouser: #3a567f;
+    --farmer-boot: #543a22;
+  }
+}
+
+/* ---- the viewport and the world ---------------------------------------- */
+.garden-scene{
+  /* Was a scroller. Now a window: the camera moves the world, so a scrollbar
+     here would fight it and a stray wheel event would desynchronise the two. */
+  overflow: hidden !important;
+  position: relative;
+  height: clamp(460px, 74vh, 880px);
+  border-radius: 12px;
+  background: linear-gradient(180deg, var(--sky-hi), var(--sky-lo) 60%);
+  cursor: default;
+}
+
+.garden-world{
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* At least as wide as the viewport, or the world ends mid-screen and leaves a
+     strip of bare sky down the right-hand side. */
+  width: max(100%, 980px);
+  /* Height comes from the parcels inside it. */
+  transform: translate(0, 0);
+  will-change: transform;
+  /* The ground everything stands on. The parcels sit on it with gaps, and those
+     gaps ARE the paths — so this has to be the path colour, not a neutral. */
+  background:
+    radial-gradient(circle at 22% 8%, rgba(255,255,255,0.20), transparent 40%),
+    linear-gradient(180deg, var(--path-hi), var(--path) 22%, var(--path-lo));
+}
+
+/* ---- sky band, distant fields, treeline -------------------------------- */
+.garden-scene .garden-sky{
+  position: relative !important;
+  height: 112px;
+  overflow: hidden;
+  background: linear-gradient(180deg, var(--sky-hi), var(--sky-lo));
+  mask: none !important;
+  -webkit-mask: none !important;
+}
+
+.garden-sky .far-fields{
+  /* Patchwork fields on the horizon. Three overlapping wedges is enough: at this
+     distance a field is a shape, not a texture. */
+  position: absolute;
+  left: -5%;
+  right: -5%;
+  bottom: 26px;
+  height: 66px;
+  background:
+    /* Two soft bands, not intersecting wedges. The wedges met at a hard diagonal
+       that read as a seam across the horizon — a join in the artwork rather than
+       a field boundary. */
+    linear-gradient(180deg,
+      var(--far-field-c) 0 34%,
+      var(--far-field-a) 34% 68%,
+      var(--far-field-b) 68%);
+  border-radius: 50% 50% 0 0 / 30px 30px 0 0;
+}
+
+.garden-sky .far-trees{
+  /* A treeline as a row of soft blobs. Drawn with repeating radial gradients so
+     it costs nothing and tiles for any world width. */
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 58px;
+  height: 40px;
+  background-image:
+    radial-gradient(circle at 12px 26px, var(--far-tree) 11px, transparent 12px),
+    radial-gradient(circle at 34px 30px, var(--far-tree-dark) 13px, transparent 14px),
+    radial-gradient(circle at 58px 27px, var(--far-tree) 10px, transparent 11px);
+  background-size: 72px 40px;
+  background-repeat: repeat-x;
+  opacity: 0.9;
+}
+
+.garden-fence{
+  /* The back fence: posts and two rails, repeating. It is what separates the
+     farm from the horizon and stops the field floating in green. */
+  position: relative;
+  height: 26px;
+  background-image:
+    linear-gradient(90deg, var(--sign-wood) 0 6px, transparent 6px 26px),
+    linear-gradient(180deg, transparent 5px, var(--path-lo) 5px 8px, transparent 8px 15px, var(--path-lo) 15px 18px, transparent 18px);
+  background-size: 26px 26px, 100% 26px;
+  background-repeat: repeat-x, repeat-x;
+}
+
+.garden-verge{
+  /* Flower border along the front, as in the game. Purely scenery, and the last
+     thing in the world so the camera has somewhere to stop. */
+  height: 42px;
+  background:
+    radial-gradient(circle at 8px 30px, #f4f4f4 3px, transparent 4px),
+    radial-gradient(circle at 20px 34px, #f6c1d4 3px, transparent 4px),
+    radial-gradient(circle at 32px 29px, #f9e089 3px, transparent 4px),
+    linear-gradient(180deg, var(--grass-lo), var(--grass-edge));
+  background-size: 40px 42px, 40px 42px, 40px 42px, 100% 100%;
+  background-repeat: repeat-x, repeat-x, repeat-x, no-repeat;
+}
+
+/* ---- the parcels ------------------------------------------------------- */
+.garden-plot.plot-field{
+  display: grid !important;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 34px 44px;           /* the paths */
+  padding: 26px 40px 24px;
+  margin: 0 !important;
+  max-width: none !important;
+  background: none;
+}
+
+.parcel{
+  position: relative;
+  border-radius: 10px;
+  /* Thin. A wide grass apron around a bed reads as a plastic frame around a
+     photograph rather than as a lawn a bed was cut into. */
+  padding: 6px 5px 5px;
+  /* Every parcel sits on grass; what it is FOR is painted inside it. The grass
+     apron is what makes a bed read as a bed cut into a lawn. */
+  background: linear-gradient(180deg, var(--grass-hi), var(--grass) 55%, var(--grass-lo));
+  box-shadow:
+    inset 0 0 0 2px var(--grass-edge),
+    0 3px 0 rgba(0, 0, 0, 0.16);
+}
+
+.parcel-grid{
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  /* No gap: inside a bed the plants stand shoulder to shoulder, which is what
+     makes a crop read as a crop rather than as ten ornaments in a row. */
+  gap: 0;
+  position: relative;
+  z-index: 1;
+}
+
+/* --- a bed: a block of small tilled squares, one per plant ---
+   The first version painted the whole bed as one sheet of earth. It looked
+   tidier and it was wrong: with no boundary between plots there is nothing on
+   screen that says "a plant goes HERE", so the bed read as scenery rather than
+   as somewhere to plant. Each plot gets its own square with a narrow gap, which
+   is how the game this is modelled on does it. */
+.parcel-bed{
+  background: linear-gradient(180deg, var(--grass-hi), var(--grass-lo));
+}
+.parcel-bed .parcel-grid{
+  gap: 5px;
+  padding: 5px;
+  border-radius: 6px;
+  background: linear-gradient(180deg, rgba(0,0,0,0.10), rgba(0,0,0,0.16));
+}
+
+/* One tilled square per plot. Drawn on the plot rather than the parcel so it is
+   also the hit target, and so an empty one reads as ready. */
+.parcel-bed .plot-slot::after{
+  /* Every geometry property is reset explicitly. The older rules for this
+     pseudo-element set their own width, offset and tilt for the pill-shaped bed
+     it used to draw, and re-enabling it without clearing those produced a brown
+     bar hanging off the top-left of each plot. */
+  display: block !important;
+  content: "";
+  position: absolute;
+  left: 0 !important;
+  right: 0 !important;
+  top: 0 !important;
+  bottom: 0 !important;
+  width: auto !important;
+  height: auto !important;
+  transform: none !important;
+  border-radius: 5px !important;
+  z-index: 0;
+  background:
+    /* A couple of clods, nothing regular. Any line running the full width of a
+       plot reads as a plank, and an even scatter reads as pegboard — both of
+       those were tried on the full-width bed and both looked manufactured. */
+    radial-gradient(circle at 32% 64%, rgba(0,0,0,0.07) 2px, transparent 3px),
+    radial-gradient(circle at 72% 30%, rgba(255,255,255,0.05) 2px, transparent 3px),
+    linear-gradient(180deg, var(--tilled-hi), var(--tilled) 48%, var(--tilled-lo));
+  background-size: 23px 29px, 41px 37px, auto;
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.16),
+    inset 0 2px 3px rgba(255, 255, 255, 0.10);
+}
+.parcel-bed .plot-slot{ position: relative; }
+
+/* --- a pen: grass, a rail fence, and its building --- */
+.parcel-pen .parcel-grid{
+  border-radius: 6px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.10), rgba(0,0,0,0.06));
+  /* A real rail fence rather than a hairline: posts at intervals with the fence
+     colour, so a pen reads as enclosed from across the farm. */
+  box-shadow:
+    inset 0 0 0 5px var(--sign-wood),
+    inset 0 0 0 7px rgba(0, 0, 0, 0.12);
+}
+.parcel-pen .parcel-grid::before{
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 6px;
+  pointer-events: none;
+  background-image: linear-gradient(90deg, var(--path-lo) 0 4px, transparent 4px 22px);
+  background-size: 22px 100%;
+  background-repeat: repeat-x;
+  mask: linear-gradient(180deg, #000 0 5px, transparent 5px calc(100% - 5px), #000 calc(100% - 5px));
+  -webkit-mask: linear-gradient(180deg, #000 0 5px, transparent 5px calc(100% - 5px), #000 calc(100% - 5px));
+}
+.parcel-pen .plot-slot::after{ display: none !important; }
+
+/* --- a pond: the water IS the land --- */
+.parcel-pond{
+  background: linear-gradient(180deg, var(--grass-hi), var(--grass-lo));
+}
+.parcel-pond .parcel-grid{
+  border-radius: 40px / 26px;
+  background: linear-gradient(180deg, var(--water-top), var(--water-bot));
+  box-shadow:
+    inset 0 0 0 4px var(--water-rim),
+    inset 0 6px 14px rgba(255, 255, 255, 0.28);
+}
+.parcel-pond .plot-slot::after{ display: none !important; }
+.parcel-pond .plot-slot::before{ display: none !important; }
+
+/* --- meadow: opened but empty. Ready, not failed. --- */
+.parcel-meadow .parcel-grid{
+  border-radius: 6px;
+  background:
+    radial-gradient(circle at 30% 40%, rgba(255,255,255,0.16), transparent 60%),
+    linear-gradient(180deg, rgba(255,255,255,0.08), rgba(0,0,0,0.05));
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.18);
+}
+
+/* Held item cannot go in this parcel at all — said once, on the parcel, rather
+   than ten times on ten plots. */
+.parcel-wrong{ filter: saturate(0.55) brightness(0.94); }
+.parcel-wrong .parcel-grid{ box-shadow: inset 0 0 0 2px rgba(0,0,0,0.18); }
+
+/* --- the building for a pen --- */
+.parcel-pen{
+  /* Room at the top for the building to stand in, inside the pen rather than
+     hanging off its corner where the parcel's own rounding clips it. */
+  padding-top: 46px;
+}
+.parcel-house{
+  position: absolute;
+  top: 4px;
+  left: 10px;
+  z-index: 2;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.18));
+}
+.house-svg{ display: block; width: 72px; height: auto; }
+
+/* --- unopened land, with its sign --- */
+.parcel-locked{
+  min-height: 128px;
+  display: grid;
+  place-items: center;
+  background:
+    repeating-linear-gradient(52deg,
+      rgba(0, 0, 0, 0.05) 0 8px, transparent 8px 18px),
+    linear-gradient(180deg, #cbb994, #a89372);
+  box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.14);
+}
+
+.parcel-buy{
+  display: grid;
+  gap: 2px;
+  justify-items: center;
+  padding: 0.5rem 0.9rem 0.55rem;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+  color: #5a3d1d;
+  background: linear-gradient(180deg, var(--sign-face), #e3c98f);
+  box-shadow:
+    0 0 0 3px var(--sign-wood),
+    0 10px 0 -4px var(--sign-wood),
+    0 3px 0 rgba(0, 0, 0, 0.2);
+  transition: transform 0.12s ease;
+}
+.parcel-buy:hover{ transform: translateY(-2px); }
+.parcel-buy-word{ font-size: 0.72rem; letter-spacing: 0.04em; text-transform: uppercase; }
+.parcel-buy-price{ font-weight: 700; font-size: 1.05rem; }
+/* Out of reach: dimmed, still priced. There is never a "you need N more"
+   anywhere in this card — see the note on that rule in the README. */
+.parcel-buy-costly{ opacity: 0.62; }
+
+/* ---- plots and plants ------------------------------------------------- */
+.plot-slot{
+  min-height: 0 !important;
+  aspect-ratio: 5 / 6;
+  padding: 0 !important;
+  border: 0;
+  background: none;
+  display: grid;
+  place-items: end center;
+}
+
+/* Plants fill their plot and are allowed to spill past it, because in a real bed
+   a crop touches its neighbours. They were reading as specks in the middle of a
+   wide empty cell. */
+.plot-slot{ overflow: visible; }
+.plot-slot .plant{
+  width: 138% !important;
+  max-width: none !important;
+  position: relative;
+  z-index: 1;
+}
+.plot-slot .plant-svg{
+  width: 100% !important;
+  max-width: none !important;
+  height: auto;
+  overflow: visible;
+}
+
+/* ---- the farmer ------------------------------------------------------- */
+.farmer{
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* Positioned by transform from JS, in world coordinates. The offset puts the
+     given point at the farmer's FEET rather than their top-left, so walking to a
+     plot means standing on it. */
+  /* Half again as big as drawn: at 28x40 the farmer was a speck on a field this
+     wide. The offset keeps the given point at the FEET, so walking to a plot
+     means standing on it rather than hovering above it. */
+  margin: -60px 0 0 -21px;
+  z-index: 6;
+  /* Must never eat a click: the farmer stands over the plots. */
+  pointer-events: none;
+}
+.farmer-svg{ display: block; width: 42px; height: 60px; }
+
+.f-shadow{ fill: rgba(0, 0, 0, 0.20); }
+.f-shirt{ fill: var(--farmer-shirt); }
+.f-arm{ fill: var(--farmer-shirt-dark); }
+.f-skin{ fill: var(--farmer-skin); }
+.f-hat{ fill: var(--farmer-hat); }
+.f-hat-crown{ fill: var(--farmer-hat-dark); }
+.f-band{ fill: var(--farmer-shirt-dark); }
+.f-leg{ fill: var(--farmer-trouser); }
+.f-boot{ fill: var(--farmer-boot); }
+
+.farmer-walking .farmer-bob{ animation: farmerBob 0.34s steps(2, end) infinite; }
+.farmer-walking .f-leg-a{ animation: farmerLegA 0.34s ease-in-out infinite; }
+.farmer-walking .f-leg-b{ animation: farmerLegB 0.34s ease-in-out infinite; }
+
+@keyframes farmerBob{
+  0%   { transform: translateY(0); }
+  50%  { transform: translateY(-1.4px); }
+  100% { transform: translateY(0); }
+}
+@keyframes farmerLegA{
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50%      { transform: translateY(-1.6px) rotate(-7deg); }
+}
+@keyframes farmerLegB{
+  0%, 100% { transform: translateY(-1.6px) rotate(7deg); }
+  50%      { transform: translateY(0) rotate(0deg); }
+}
+
+/* ---- narrow screens --------------------------------------------------- */
+@media (max-width: 700px){
+  .garden-scene{ height: clamp(360px, 58vh, 520px); }
+  .garden-plot.plot-field{ gap: 34px 40px; padding: 26px 30px 24px; }
+  .parcel{ padding: 10px 8px 8px; }
+  .parcel-house{ top: -24px; }
+  .house-svg{ width: 50px; }
+}
+
+/* ---- reduced motion --------------------------------------------------- */
+@media (prefers-reduced-motion: reduce){
+  /* The farmer still moves — that is the control, not decoration — but the walk
+     cycle and the bob go, and the JS jumps straight to the target instead of
+     chasing it frame by frame. A view that drifts continuously is the exact
+     thing this setting exists to switch off. */
+  .farmer-walking .farmer-bob,
+  .farmer-walking .f-leg-a,
+  .farmer-walking .f-leg-b{ animation: none; }
+  .parcel-buy{ transition: none; }
+}
+
+/* ---- the destination marker ----
+   A right-click that lands somewhere unwalkable would otherwise look like the
+   game ignored the press, so the marker is feedback about the INPUT, not about
+   the farmer: it appears the moment you click, wherever you clicked. */
+.farm-mark{
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 26px;
+  height: 26px;
+  margin: -13px 0 0 -13px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 3px rgba(255, 255, 255, 0.9);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+.farm-mark-ping{ animation: farmMarkPing 0.45s ease-out both; }
+
+@keyframes farmMarkPing{
+  0%   { opacity: 0.95; transform-origin: center; scale: 0.4; }
+  100% { opacity: 0;    scale: 1.15; }
+}
+
+@media (prefers-reduced-motion: reduce){
+  /* The marker still shows — it is the only confirmation the click registered —
+     it just does not expand. */
+  .farm-mark-ping{ animation: farmMarkHold 0.45s steps(1, end) both; }
+  @keyframes farmMarkHold{ 0%, 70% { opacity: 0.9; } 100% { opacity: 0; } }
+}
+
+/* ---- the two buildings on the yard ----
+   One shop, one store, standing between the fence and the first parcels. The
+   per-pen coops and barns are deliberately much smaller than these: a row of
+   full-size sheds made the farm read as a depot, and holding stock is the job of
+   the one Store and nothing else. */
+.farm-yard{
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 30px;
+  padding: 10px 46px 4px;
+  min-height: 96px;
+}
+
+.farm-building{
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.18));
+  transition: transform 0.14s ease;
+}
+.farm-building:hover{ transform: translateY(-3px); }
+.farm-building:focus-visible{ outline: 3px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
+
+.building-svg{ display: block; width: 116px; height: auto; }
+
+.building-name{
+  padding: 1px 8px 2px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #5a3d1d;
+  background: linear-gradient(180deg, var(--sign-face), #e3c98f);
+  box-shadow: 0 0 0 2px var(--sign-wood);
+}
+
+.b-wall{ fill: #e8d3a8; }
+.b-wall-dark{ fill: #b99a6c; }
+.b-roof{ fill: #c9543f; }
+.b-roof-dark{ fill: #a2402f; }
+.b-counter{ fill: #b9814a; }
+.b-awning{ fill: #f4f0e6; }
+.b-awning-stripe{ fill: #4fa8d8; }
+.b-goods{ fill: #e2703a; }
+.b-goods-b{ fill: #7cb342; }
+.b-sign{ fill: #f0dcae; }
+.b-door{ fill: #8a5c2c; }
+.b-door-panel{ fill: #a9763f; }
+.b-hay{ fill: #6b4a28; }
+.b-hay-dark{ fill: #e0c274; }
+
+:root[data-theme="dark"] .garden-stage{
+  --b-wall: #9c8760;
+}
+.building-svg .b-wall{ fill: var(--b-wall, #e8d3a8); }
+
+/* Smaller pen housing, now that the Store is the building that means storage. */
+.house-svg{ width: 54px; }
+.parcel-pen{ padding-top: 38px; }
+
+/* ---- the store panel ----
+   Same treatment as the shop: it covers the farm while open. The basket used to
+   be a strip pinned across the bottom of the scene, permanently covering the
+   thing you were building. */
+.store-panel{
+  position: absolute;
+  inset: 12px;
+  z-index: 9;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.9rem 1rem 1rem;
+  border-radius: 12px;
+  background: var(--paper-raised);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+  overflow: auto;
+}
+.store-panel .garden-basket{
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.9rem;
+}
+.basket-empty{
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
+/* `display:flex` beats the user-agent `[hidden]{display:none}` rule, so without
+   this the store panel is open the moment the page loads and covers the farm.
+   Found by looking at a screenshot that was nothing but the panel. */
+.store-panel[hidden]{ display: none !important; }
+
+/* The plant's own ground shadow was a pale ellipse, which worked over the old
+   light scene and reads as a saucer — a pot rim — once the plant is standing on
+   dark tilled earth. On a bed it becomes an actual shadow. */
+.parcel-bed .t-shadow{ fill: rgba(0, 0, 0, 0.22); }
+.parcel-pen .t-shadow{ fill: rgba(0, 0, 0, 0.16); }
+.parcel-pond .t-shadow{ fill: rgba(0, 0, 0, 0.12); }
+
+/* ---- animals wander their pen ----
+   The route comes from the animal's own id (see setRoam in js/app.js), so each
+   one takes a different path and takes the same path every redraw. It is a
+   transform on the sprite, not on the plot, so the plot stays exactly where it
+   is as a click target — and because the plot does not clip, pressing the animal
+   where it actually stands still works. */
+.parcel-pen .plot-slot-filled .plant,
+.parcel-pond .plot-slot-filled .plant{
+  animation: petRoam var(--roam-dur, 22s) ease-in-out var(--roam-delay, 0s) infinite;
+}
+
+@keyframes petRoam{
+  0%   { transform: translate(0, 0) scaleX(1); }
+  24%  { transform: translate(var(--roam-x1, 60%), var(--roam-y1, 10%)) scaleX(1); }
+  26%  { transform: translate(var(--roam-x1, 60%), var(--roam-y1, 10%)) scaleX(-1); }
+  49%  { transform: translate(var(--roam-x2, -70%), var(--roam-y2, -12%)) scaleX(-1); }
+  51%  { transform: translate(var(--roam-x2, -70%), var(--roam-y2, -12%)) scaleX(1); }
+  74%  { transform: translate(var(--roam-x3, 40%), var(--roam-y3, 16%)) scaleX(1); }
+  76%  { transform: translate(var(--roam-x3, 40%), var(--roam-y3, 16%)) scaleX(-1); }
+  100% { transform: translate(0, 0) scaleX(-1); }
+}
+
+/* Fish drift rather than trot: no flip, and slower. A fish that snaps round at
+   each waypoint reads as a glitch. */
+.parcel-pond .plot-slot-filled .plant{
+  animation-duration: calc(var(--roam-dur, 22s) * 1.6);
+}
+@media (prefers-reduced-motion: reduce){
+  /* Animals stand still. Continuous drifting motion across the screen is exactly
+     what this setting exists to switch off. */
+  .parcel-pen .plot-slot-filled .plant,
+  .parcel-pond .plot-slot-filled .plant{ animation: none; }
+}
