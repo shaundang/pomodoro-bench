@@ -7378,6 +7378,19 @@
           existing.notes = Array.isArray(t.notes) ? t.notes : existing.notes;
           existing.updatedAt = incomingUpdatedAt;
           updatedTasks += 1;
+        } else if(incomingUpdatedAt === (existing.updatedAt || 0) && !!t.done && !existing.done){
+          // One-time bridge for tasks marked done on a pre-updatedAt client:
+          // both sides backfill updatedAt to the same createdAt, so neither
+          // looks newer and the rule above never fires — a done made before
+          // this stamp existed would otherwise never reach another device.
+          // A tie is otherwise a no-op (see above), so this only ever moves
+          // a task from not-done to done, never the reverse, and never
+          // touches any other field — the same task genuinely being
+          // reopened later gets a fresh updatedAt and takes the branch
+          // above instead.
+          existing.done = true;
+          existing.doneAt = typeof t.doneAt === 'number' ? t.doneAt : nowMs();
+          updatedTasks += 1;
         }
         return;
       }

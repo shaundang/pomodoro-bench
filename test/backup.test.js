@@ -99,6 +99,44 @@ describe('backup export/import (window.PomodoroBench)', () => {
       expect(t.completed).toBe(3);
       expect(result.updatedTasks).toBe(0);
     });
+
+    // A task marked done on a device that predates the updatedAt stamp never
+    // got one bumped — both sides backfill it to the same createdAt, so the
+    // "strictly newer wins" rule above sees a tie and does nothing, and the
+    // done never crosses over. This is the one-time bridge for exactly that.
+    it('adopts a done from a tied remote copy (pre-updatedAt client) instead of leaving it stuck unfinished', async () => {
+      await mountApp();
+      localStorage.setItem('pomodoroBench.tasks.v1', JSON.stringify([
+        { id: 't1', name: 'Write report', category: 'Work', estimate: 1, completed: 0, done: false, doneAt: null, createdAt: 1, updatedAt: 1, sessionPresetId: 'deep', workMin: 50, breakMin: 10, notes: [] }
+      ]));
+
+      const result = window.PomodoroBench.applyIncomingBackup({
+        sessions: [],
+        tasks: [{ id: 't1', name: 'Write report', category: 'Work', estimate: 1, completed: 0, done: true, doneAt: 42, createdAt: 1, updatedAt: 1 }]
+      });
+
+      const t = tasks().find((x) => x.id === 't1');
+      expect(t.done).toBe(true);
+      expect(t.doneAt).toBe(42);
+      expect(result.updatedTasks).toBe(1);
+    });
+
+    it('does not un-finish an already-done task from a tied remote copy that is still unfinished', async () => {
+      await mountApp();
+      localStorage.setItem('pomodoroBench.tasks.v1', JSON.stringify([
+        { id: 't1', name: 'Write report', category: 'Work', estimate: 1, completed: 0, done: true, doneAt: 42, createdAt: 1, updatedAt: 1, sessionPresetId: 'deep', workMin: 50, breakMin: 10, notes: [] }
+      ]));
+
+      const result = window.PomodoroBench.applyIncomingBackup({
+        sessions: [],
+        tasks: [{ id: 't1', name: 'Write report', category: 'Work', estimate: 1, completed: 0, done: false, doneAt: null, createdAt: 1, updatedAt: 1 }]
+      });
+
+      const t = tasks().find((x) => x.id === 't1');
+      expect(t.done).toBe(true);
+      expect(t.doneAt).toBe(42);
+      expect(result.updatedTasks).toBe(0);
+    });
   });
 
   // A farm is the one thing in here you cannot get back by working again: the
