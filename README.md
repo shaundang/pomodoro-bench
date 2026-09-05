@@ -163,6 +163,48 @@ ngay lúc đọc. Hai chỗ rủi ro đã được sửa:
   active** giống như tick tại máy — trừ khi đang chạy một phiên trên task đó,
   phiên ấy được kết thúc dưới đúng task đã bắt đầu.
 
+### Firestore là gốc cho task: một document mỗi task (đã chuyển)
+
+Từ bản này, **khi đã đăng nhập, Firestore là nguồn sự thật cho task**, mỗi task
+một document tại `syncs/{uid}/tasks/{taskId}`. localStorage
+(`pomodoroBench.tasks.v1`) chỉ còn là **bản cache** được ghi lại từ mỗi snapshot
+của collection, kể cả xóa. Chưa đăng nhập thì localStorage vẫn là kho như trước.
+
+Cách hoạt động (`forwardTaskOp` trong `js/app.js`, `firestoreTaskBackend` trong
+`js/sync.js`):
+
+- Mỗi thao tác của bạn thành **một lệnh ghi nhỏ vào đúng document của task đó**:
+  thêm là `setDoc`, tick/đổi tên/đổi category/sửa là `updateDoc` với đúng các
+  trường đổi, xóa là `deleteDoc`, xong một pomodoro là `increment(1)` nguyên tử
+  nên hai máy cùng đếm không mất lượt nào.
+- Không máy nào ghi task mà nó không tự đổi, nên **không còn ghi đè**: tick ở
+  điện thoại giữ nguyên trong DB cho tới khi có người cố ý bỏ tick; xóa ở máy này
+  thì biến mất ở máy kia và **không hồi sinh**.
+- Firestore chạy với cache bền (`persistentLocalCache`), nên thao tác lúc mất
+  mạng được xếp hàng và gửi khi có mạng, qua cả reload.
+- Sửa task lúc **đã đăng xuất** được ghi nhớ theo id trong
+  `pomodoroBench.tasks.v1.pending`; lần đăng nhập sau upload đúng những task đó,
+  không đụng task khác.
+
+**Migration một lần, không mất gì.** Lần đầu đăng nhập trên code này, nếu
+collection còn trống và document user chưa có `tasksMigratedAt`: gộp mảng
+`tasks` cũ trong document user với cache của máy này bằng đúng luật merge có
+stamp done, rồi ghi toàn bộ vào collection theo batch. Chỉ khi mọi batch thành
+công mới đặt `tasksMigratedAt`. Trước khi làm, một bản sao cache được giữ ở key
+`pomodoroBench.tasks.v1.preMigration.<timestamp>`. Mảng `tasks` cũ trong document
+user **không bị xóa**: document user từ nay chỉ ghi bằng `merge: true` và không
+gửi `tasks` nữa, nên mảng cũ nằm đó như một bản đông lạnh. Nếu đọc collection bị
+từ chối (chưa deploy rule) hoặc lỗi mạng, sync không cài gì và không thay đổi gì
+ở local.
+
+Sessions, categories, presets vẫn đi qua document user như cũ (merge cộng thêm).
+Vườn vẫn chưa sync qua Firebase, chỉ qua Export/Import.
+
+**Rule Firestore** phải có thêm nhánh `tasks` (xem `firestore.rules`) và cần
+deploy thủ công: `npx firebase-tools deploy --only firestore:rules`. Chưa deploy
+thì client báo "Could not connect: Missing or insufficient permissions" và chạy
+tiếp bằng local, không mất gì.
+
 ### Done đi riêng một stamp: `doneChangedAt` (đã sửa)
 
 Triệu chứng: tick done hàng loạt task trên điện thoại, mở laptop vẫn thấy tất cả

@@ -1,11 +1,16 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Each signed-in user's data lives at /syncs/{their uid}. Only that
+    // Each signed-in user's data lives under /syncs/{their uid}. Only that
     // user (proven by Firebase Auth, not by knowing a secret string) can
-    // read or write their own document.
+    // read or write it.
     match /syncs/{uid} {
       allow read, write: if request.auth != null && request.auth.uid == uid;
+
+      // One document per task — the task store while signed in.
+      match /tasks/{taskId} {
+        allow read, write: if request.auth != null && request.auth.uid == uid;
+      }
     }
     match /{document=**} {
       allow read, write: if false;

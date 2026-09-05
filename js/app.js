@@ -331,11 +331,16 @@
     saveCustomPresets(arr);
 
     var tasks = loadTasks();
-    var touched = false;
+    var touched = [];
     tasks.forEach(function(t){
-      if(t.sessionPresetId === id){ t.sessionPresetId = 'custom'; t.updatedAt = nowMs(); touched = true; }
+      if(t.sessionPresetId === id){ t.sessionPresetId = 'custom'; t.updatedAt = nowMs(); touched.push(t); }
     });
-    if(touched) saveTasks(tasks);
+    if(touched.length){
+      saveTasks(tasks);
+      touched.forEach(function(t){
+        forwardTaskOp({type:'update', id: t.id, fields: {sessionPresetId: t.sessionPresetId, updatedAt: t.updatedAt}});
+      });
+    }
 
     if(state.presetId === id){
       state.presetId = 'custom';
@@ -525,6 +530,7 @@
     t.breakMin = state.breakMin;
     t.updatedAt = nowMs();
     saveTasks(tasks);
+    forwardTaskOp({type:'update', id: t.id, fields: {sessionPresetId: t.sessionPresetId, workMin: t.workMin, breakMin: t.breakMin, updatedAt: t.updatedAt}});
     renderTasks();
   }
 
@@ -997,9 +1003,96 @@
     return arr;
   }
 
+  // Writes the local task cache only. Signed out, this cache *is* the task
+  // store. Signed in, Firestore is the store — one document per task under
+  // syncs/{uid}/tasks — and this cache is a mirror of it that js/sync.js
+  // rewrites from every collection snapshot (see replaceTasksFromRemote).
+  // Every user-made change goes through forwardTaskOp as well, so the
+  // change reaches the store as a small per-task write rather than as a
+  // whole-list overwrite.
   function saveTasks(arr){
     try{ localStorage.setItem(STORAGE_TASKS, JSON.stringify(arr)); }catch(e){ /* ignore */ }
     notifyLocalChange('tasks');
+  }
+
+  // ---- task store backend (installed by js/sync.js while signed in) ----
+  // An op is one of:
+  //   {type:'set',       id, task}                — create or fully replace
+  //   {type:'update',    id, fields}              — patch named fields
+  //   {type:'increment', id, field, by, fields}   — atomic counter + patch
+  //   {type:'delete',    id}
+  var taskBackend = null;
+  // Ops made while signed out are remembered by id, so the next sign-in
+  // can upload exactly those tasks (and deletes) instead of guessing.
+  var STORAGE_TASKS_PENDING = STORAGE_TASKS + '.pending';
+
+  function setTaskBackend(backend){
+    taskBackend = backend || null;
+  }
+
+  function forwardTaskOp(op){
+    if(taskBackend){
+      try{ taskBackend.apply(op); }catch(e){ /* backend reports its own errors */ }
+      return;
+    }
+    recordPendingTaskOp(op);
+  }
+
+  function loadPendingTaskOps(){
+    try{
+      var raw = localStorage.getItem(STORAGE_TASKS_PENDING);
+      var p = raw ? JSON.parse(raw) : null;
+      if(!p || typeof p !== 'object') p = {};
+      if(!p.upserts || typeof p.upserts !== 'object') p.upserts = {};
+      if(!p.deletes || typeof p.deletes !== 'object') p.deletes = {};
+      return p;
+    }catch(e){ return {upserts: {}, deletes: {}}; }
+  }
+
+  function recordPendingTaskOp(op){
+    if(!op || !op.id) return;
+    var p = loadPendingTaskOps();
+    if(op.type === 'delete'){
+      delete p.upserts[op.id];
+      p.deletes[op.id] = true;
+    } else {
+      delete p.deletes[op.id];
+      p.upserts[op.id] = true;
+    }
+    try{ localStorage.setItem(STORAGE_TASKS_PENDING, JSON.stringify(p)); }catch(e){ /* ignore */ }
+  }
+
+  // Returns {upserts:[ids], deletes:[ids]} and clears them.
+  function takePendingTaskOps(){
+    var p = loadPendingTaskOps();
+    try{ localStorage.removeItem(STORAGE_TASKS_PENDING); }catch(e){ /* ignore */ }
+    return {upserts: Object.keys(p.upserts), deletes: Object.keys(p.deletes)};
+  }
+
+  // Keeps a dated copy of the current task cache under its own key. Used
+  // right before the store moves to Firestore, so nothing that was on this
+  // device is ever more than one localStorage key away.
+  function backupTasksCache(label){
+    try{
+      var raw = localStorage.getItem(STORAGE_TASKS);
+      if(raw) localStorage.setItem(STORAGE_TASKS + '.' + label + '.' + nowMs(), raw);
+    }catch(e){ /* ignore */ }
+  }
+
+  // The store spoke: this is the full set of tasks now. Replaces the cache
+  // wholesale (deletions included), then brings everything that hangs off
+  // a task id — the active task, an open edit card — back in line.
+  function replaceTasksFromRemote(remoteTasks){
+    var arr = Array.isArray(remoteTasks) ? remoteTasks.filter(function(t){ return !!t && typeof t === 'object' && t.id; }) : [];
+    saveTasks(arr);
+    var tasks = loadTasks();
+    var ids = {};
+    tasks.forEach(function(t){ ids[t.id] = true; });
+    if(editingTaskId && !ids[editingTaskId]){ editingTaskId = null; editingTaskNotesDraft = null; }
+    if(editingCategoryTaskId && !ids[editingCategoryTaskId]) editingCategoryTaskId = null;
+    reconcileActiveTask(tasks);
+    renderTasks();
+    renderTimer();
   }
 
   function findTask(id){
@@ -1025,6 +1118,7 @@
       notes: []
     });
     saveTasks(tasks);
+    forwardTaskOp({type:'set', id: tasks[tasks.length - 1].id, task: tasks[tasks.length - 1]});
     renderTasks();
   }
 
@@ -1067,7 +1161,12 @@
   function reconcileActiveTask(tasks){
     if(!state.activeTaskId) return;
     var t = tasks.filter(function(x){ return x.id === state.activeTaskId; })[0];
-    if(!t) return;
+    if(!t){
+      // Deleted on another device. Same rule as done: a running session
+      // finishes under the task it started with.
+      if(!state.running){ clearActiveTask(); renderTimer(); }
+      return;
+    }
     if(t.done && !state.running){
       clearActiveTask();
       renderTimer();
@@ -1090,6 +1189,7 @@
     t.doneChangedAt = nowMs();
     t.updatedAt = nowMs();
     saveTasks(tasks);
+    forwardTaskOp({type:'update', id: id, fields: {done: t.done, doneAt: t.doneAt, doneChangedAt: t.doneChangedAt, updatedAt: t.updatedAt}});
     if(t.done && state.activeTaskId === id){ clearActiveTask(); }
     renderTasks();
     renderTimer();
@@ -1102,6 +1202,7 @@
     lastDeleted = {type:'task', data: tasks[idx]};
     tasks.splice(idx, 1);
     saveTasks(tasks);
+    forwardTaskOp({type:'delete', id: id});
     if(state.activeTaskId === id) clearActiveTask();
     if(editingTaskId === id){ editingTaskId = null; editingTaskNotesDraft = null; }
     if(editingCategoryTaskId === id) editingCategoryTaskId = null;
@@ -1117,6 +1218,7 @@
     t.category = name;
     t.updatedAt = nowMs();
     saveTasks(tasks);
+    forwardTaskOp({type:'update', id: id, fields: {category: t.category, updatedAt: t.updatedAt}});
     if(state.activeTaskId === id){
       state.activeTaskCategory = name;
       saveTimerState();
@@ -1155,6 +1257,11 @@
     t.updatedAt = nowMs();
 
     saveTasks(tasks);
+    forwardTaskOp({type:'update', id: id, fields: {
+      name: t.name, category: t.category, estimate: t.estimate,
+      sessionPresetId: t.sessionPresetId, workMin: t.workMin, breakMin: t.breakMin,
+      notes: t.notes, updatedAt: t.updatedAt
+    }});
     if(state.activeTaskId === id){
       state.activeTaskName = t.name;
       state.activeTaskCategory = t.category;
@@ -1183,6 +1290,9 @@
     t.completed += 1;
     t.updatedAt = nowMs();
     saveTasks(tasks);
+    // An atomic increment in the store, so two devices each finishing a
+    // pomodoro on this task both count — neither overwrites the other.
+    forwardTaskOp({type:'increment', id: id, field: 'completed', by: 1, fields: {updatedAt: t.updatedAt}});
     renderTasks();
   }
 
@@ -1407,6 +1517,7 @@
       lastDeleted.data.updatedAt = nowMs();
       tasks.push(lastDeleted.data);
       saveTasks(tasks);
+      forwardTaskOp({type:'set', id: lastDeleted.data.id, task: lastDeleted.data});
       renderTasks();
     }
     lastDeleted = null;
@@ -7436,6 +7547,7 @@
     var taskById = {};
     currentTasks.forEach(function(t){ taskById[t.id] = t; });
     var addedTasks = 0, updatedTasks = 0;
+    var touchedTasks = [];
     incomingTasks.forEach(function(t){
       if(!t || !t.name) return;
       var id = t.id || generateId();
@@ -7480,7 +7592,7 @@
           existing.doneChangedAt = incomingDoneChangedAt;
           changed = true;
         }
-        if(changed) updatedTasks += 1;
+        if(changed){ updatedTasks += 1; touchedTasks.push(existing); }
         return;
       }
       var created = {
@@ -7502,8 +7614,11 @@
       currentTasks.push(created);
       taskById[id] = created;
       addedTasks += 1;
+      touchedTasks.push(created);
     });
     saveTasks(currentTasks);
+    // Whatever this merge added or changed is a change to the store too.
+    touchedTasks.forEach(function(t){ forwardTaskOp({type:'set', id: t.id, task: t}); });
     reconcileActiveTask(currentTasks);
 
     var incomingCategories = (data && Array.isArray(data.categories)) ? data.categories : [];
@@ -7962,6 +8077,12 @@
     STORAGE_CATEGORIES: STORAGE_CATEGORIES,
     buildBackupData: buildBackupData,
     applyIncomingBackup: applyIncomingBackup,
+    // Task store hooks for js/sync.js (Firestore, one document per task).
+    getTasks: loadTasks,
+    setTaskBackend: setTaskBackend,
+    replaceTasksFromRemote: replaceTasksFromRemote,
+    takePendingTaskOps: takePendingTaskOps,
+    backupTasksCache: backupTasksCache,
     categoryColorIndex: categoryColorIndex,
     categoryColorClass: categoryColorClass,
     CATEGORY_COLOR_COUNT: CATEGORY_COLOR_COUNT

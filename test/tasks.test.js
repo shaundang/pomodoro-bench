@@ -123,4 +123,63 @@ describe('task list', () => {
     expect(tasks()).toHaveLength(1);
     expect(localStorage.getItem(KEYS.tasks + '.corrupt')).toBe('{"id":"x","name":"lonely object"}');
   });
+  // The store hook js/sync.js plugs into: every user-made change is also
+  // handed over as one small per-task op, and while nothing is plugged in
+  // the ids that changed are remembered for the next sign-in.
+  describe('task store hook', () => {
+    it('hands each change to the backend as a per-task op', async () => {
+      const els = await mountApp();
+      localStorage.removeItem(KEYS.tasks + '.pending'); // earlier tests in this file ran with no backend
+      const ops = [];
+      window.PomodoroBench.setTaskBackend({ apply: (op) => ops.push(op) });
+
+      addTaskViaForm(els, 'Hooked', 'Work', 2);
+      const id = tasks()[0].id;
+      expect(ops.at(-1)).toMatchObject({ type: 'set', id, task: { name: 'Hooked', estimate: 2 } });
+
+      els.taskList.querySelector('[data-action="toggle-done"]').click();
+      expect(ops.at(-1)).toMatchObject({ type: 'update', id, fields: { done: true } });
+      expect(Object.keys(ops.at(-1).fields).sort()).toEqual(['done', 'doneAt', 'doneChangedAt', 'updatedAt']);
+
+      els.taskList.querySelector('[data-action="delete-task"]').click();
+      expect(ops.at(-1)).toEqual({ type: 'delete', id });
+
+      els.undoBtn.click();
+      expect(ops.at(-1)).toMatchObject({ type: 'set', id, task: { name: 'Hooked' } });
+      expect(localStorage.getItem(KEYS.tasks + '.pending')).toBeNull();
+    });
+
+    it('with no backend, remembers which ids changed so a later sign-in uploads exactly those', async () => {
+      const els = await mountApp();
+      addTaskViaForm(els, 'A', 'Work', 1);
+      addTaskViaForm(els, 'B', 'Work', 1);
+      const [a, b] = tasks();
+      els.taskList.querySelector(`[data-action="toggle-done"][data-id="${a.id}"]`).click();
+      els.taskList.querySelector(`[data-action="delete-task"][data-id="${b.id}"]`).click();
+
+      const pending = window.PomodoroBench.takePendingTaskOps();
+      expect(pending.upserts).toEqual([a.id]); // A: created then ticked → one upsert
+      expect(pending.deletes).toEqual([b.id]); // B: created then deleted → a delete, not an upsert
+      expect(window.PomodoroBench.takePendingTaskOps()).toEqual({ upserts: [], deletes: [] });
+    });
+
+    it('replaceTasksFromRemote swaps the cache wholesale and drops what hangs off vanished ids', async () => {
+      const els = await mountApp();
+      addTaskViaForm(els, 'Gone', 'Work', 1);
+      addTaskViaForm(els, 'Kept', 'Work', 1);
+      const [gone, kept] = tasks();
+      els.taskList.querySelector(`[data-action="activate"][data-id="${gone.id}"]`).click();
+      els.taskList.querySelector(`[data-action="edit-task"][data-id="${gone.id}"]`).click();
+      expect(els.taskList.querySelector('.edit-task-name')).not.toBeNull();
+
+      window.PomodoroBench.takePendingTaskOps(); // the adds above were user changes; clear them so the next check isolates the mirror write
+      window.PomodoroBench.replaceTasksFromRemote([{ ...kept, name: 'Kept (renamed)' }, { id: 'new', name: 'From the store', createdAt: 1 }]);
+
+      expect(tasks().map((t) => t.name)).toEqual(['Kept (renamed)', 'From the store']);
+      expect(tasks().find((t) => t.id === 'new')).toMatchObject({ estimate: 1, completed: 0, done: false, notes: [] }); // normalized
+      expect(els.taskList.querySelector('.edit-task-name')).toBeNull(); // the edit card for the vanished task is gone
+      expect(els.categoryLabel.textContent).toBe('No task selected');
+      expect(localStorage.getItem(KEYS.tasks + '.pending')).toBeNull(); // a mirror write is not a user change
+    });
+  });
 });
