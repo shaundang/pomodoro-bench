@@ -222,6 +222,15 @@
     return 'id_' + nowMs().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
   }
 
+  // Fired by every save of something the sync layer carries, so js/sync.js
+  // can push right away instead of waiting for its poll to notice — a tick
+  // on a phone that is locked two seconds later used to sit there unpushed
+  // until the app was next opened.
+  function notifyLocalChange(what){
+    try{ window.dispatchEvent(new CustomEvent('pomodoroBench:changed', {detail: {what: what}})); }
+    catch(e){ /* CustomEvent unavailable — the poll still catches it */ }
+  }
+
   // ---------- session-length presets ----------
   // The seven built-ins above are fixed; anything the user adds lives in its
   // own storage key and is appended to them. Every read of the preset list
@@ -240,6 +249,7 @@
 
   function saveCustomPresets(arr){
     try{ localStorage.setItem(STORAGE_PRESETS, JSON.stringify(arr)); }catch(e){ /* ignore */ }
+    notifyLocalChange('presets');
   }
 
   function allPresets(){
@@ -354,6 +364,7 @@
 
   function saveCategories(arr){
     try{ localStorage.setItem(STORAGE_CATEGORIES, JSON.stringify(arr)); }catch(e){ /* ignore */ }
+    notifyLocalChange('categories');
   }
 
   function addCategory(name){
@@ -970,6 +981,12 @@
       // immediately rather than lingering on the list forever.
       if(t.done && typeof t.doneAt !== 'number'){ t.doneAt = 0; migrated = true; }
       if(!t.done && t.doneAt){ t.doneAt = null; migrated = true; }
+      // When `done` last flipped, in either direction. Kept apart from
+      // updatedAt so a rename or a pomodoro counted on one device cannot
+      // outrank a tick made on another — see applyIncomingBackup. A task
+      // done before this stamp existed borrows its doneAt; one never ticked
+      // sits at 0, which any real tick beats.
+      if(typeof t.doneChangedAt !== 'number'){ t.doneChangedAt = (t.done && t.doneAt) ? t.doneAt : 0; migrated = true; }
       // Last-modified stamp used by applyIncomingBackup to decide, per
       // task, which side of a sync pull is newer. Tasks written before
       // this field existed get their creation time as a floor — never 0,
@@ -982,6 +999,7 @@
 
   function saveTasks(arr){
     try{ localStorage.setItem(STORAGE_TASKS, JSON.stringify(arr)); }catch(e){ /* ignore */ }
+    notifyLocalChange('tasks');
   }
 
   function findTask(id){
@@ -998,6 +1016,7 @@
       completed: 0,
       done: false,
       doneAt: null,
+      doneChangedAt: 0,
       createdAt: nowMs(),
       updatedAt: nowMs(),
       sessionPresetId: state.presetId,
@@ -1068,6 +1087,7 @@
     if(!t) return;
     t.done = !t.done;
     t.doneAt = t.done ? nowMs() : null;
+    t.doneChangedAt = nowMs();
     t.updatedAt = nowMs();
     saveTasks(tasks);
     if(t.done && state.activeTaskId === id){ clearActiveTask(); }
@@ -1423,6 +1443,7 @@
 
   function saveSessions(arr){
     try{ localStorage.setItem(STORAGE_SESSIONS, JSON.stringify(arr)); }catch(e){ /* ignore */ }
+    notifyLocalChange('sessions');
   }
 
   function logSession(minutes, status, type){
@@ -7359,13 +7380,23 @@
     };
   }
 
+  // The stamp `done` is settled by. A copy from before the stamp existed
+  // borrows its doneAt when finished, and counts as 0 (never ticked) when
+  // not — so a real tick on any device beats a legacy not-done.
+  function doneStampOf(t){
+    if(typeof t.doneChangedAt === 'number') return t.doneChangedAt;
+    return (t.done && typeof t.doneAt === 'number') ? t.doneAt : 0;
+  }
+
   // Merges an incoming backup object (from a file import or a remote sync
   // pull) into local storage — never deletes anything locally. Sessions,
   // categories and presets are additive by id only (an id already present
   // locally is left untouched). Tasks are additive-by-id *plus*
   // last-write-wins on a shared id: whichever side's `updatedAt` is newer
-  // overwrites the other's fields, so a done/rename/edit made on one device
-  // reaches another that already has that same task. Returns how much was
+  // overwrites the other's fields, so a rename/edit made on one device
+  // reaches another that already has that same task. `done` is settled
+  // separately by its own stamp (doneChangedAt), so a tick is never lost to
+  // an unrelated edit — see the task loop below. Returns how much was
   // newly added (and, for tasks, updated), or throws on an unrecognized
   // shape. Shared by the file-import handler and js/sync.js.
   function applyIncomingBackup(data){
@@ -7411,40 +7442,45 @@
       // Older backups/remote docs predate this stamp — fall back to
       // createdAt so an old snapshot never outranks a real edit made since.
       var incomingUpdatedAt = typeof t.updatedAt === 'number' ? t.updatedAt : (t.createdAt || 0);
+      var incomingDoneChangedAt = doneStampOf(t);
       var existing = taskById[id];
       if(existing){
+        var changed = false;
         // Ids are shared by both sides, so this is the same task edited on
         // two devices — take whichever copy changed more recently instead
-        // of always keeping local (which used to mean a done/rename/etc.
-        // made elsewhere would never show up here). Ties keep the local
-        // copy: nothing to gain by overwriting with an identical stamp.
+        // of always keeping local (which used to mean a rename/etc. made
+        // elsewhere would never show up here). Ties keep the local copy:
+        // nothing to gain by overwriting with an identical stamp.
         if(incomingUpdatedAt > (existing.updatedAt || 0)){
           existing.name = t.name;
           existing.category = t.category || 'Uncategorized';
           existing.estimate = typeof t.estimate === 'number' ? t.estimate : existing.estimate;
           existing.completed = typeof t.completed === 'number' ? t.completed : existing.completed;
-          existing.done = !!t.done;
-          existing.doneAt = typeof t.doneAt === 'number' ? t.doneAt : (t.done ? 0 : null);
           existing.sessionPresetId = t.sessionPresetId || existing.sessionPresetId;
           existing.workMin = typeof t.workMin === 'number' ? t.workMin : existing.workMin;
           existing.breakMin = typeof t.breakMin === 'number' ? t.breakMin : existing.breakMin;
           existing.notes = Array.isArray(t.notes) ? t.notes : existing.notes;
           existing.updatedAt = incomingUpdatedAt;
-          updatedTasks += 1;
-        } else if(incomingUpdatedAt === (existing.updatedAt || 0) && !!t.done && !existing.done){
-          // One-time bridge for tasks marked done on a pre-updatedAt client:
-          // both sides backfill updatedAt to the same createdAt, so neither
-          // looks newer and the rule above never fires — a done made before
-          // this stamp existed would otherwise never reach another device.
-          // A tie is otherwise a no-op (see above), so this only ever moves
-          // a task from not-done to done, never the reverse, and never
-          // touches any other field — the same task genuinely being
-          // reopened later gets a fresh updatedAt and takes the branch
-          // above instead.
-          existing.done = true;
-          existing.doneAt = typeof t.doneAt === 'number' ? t.doneAt : nowMs();
-          updatedTasks += 1;
+          changed = true;
         }
+        // `done` rides on its own stamp, not on updatedAt. Before this,
+        // one pomodoro counted here (which bumps updatedAt) was enough to
+        // make this copy "newer", so a tick made on the other device never
+        // arrived — and worse, this copy's push then un-ticked it there.
+        // Now only a later flip of `done` itself can beat an earlier one.
+        // The tie case is the one-time bridge for tasks ticked before the
+        // stamp existed: both sides sit at the same value, so a done at a
+        // tie is adopted, but a not-done never un-finishes anything.
+        var existingDoneChangedAt = doneStampOf(existing);
+        var doneWins = incomingDoneChangedAt > existingDoneChangedAt ||
+          (incomingDoneChangedAt === existingDoneChangedAt && !!t.done && !existing.done);
+        if(doneWins && (!!t.done !== existing.done || incomingDoneChangedAt !== existingDoneChangedAt)){
+          existing.done = !!t.done;
+          existing.doneAt = typeof t.doneAt === 'number' ? t.doneAt : (t.done ? nowMs() : null);
+          existing.doneChangedAt = incomingDoneChangedAt;
+          changed = true;
+        }
+        if(changed) updatedTasks += 1;
         return;
       }
       var created = {
@@ -7455,6 +7491,7 @@
         completed: typeof t.completed === 'number' ? t.completed : 0,
         done: !!t.done,
         doneAt: typeof t.doneAt === 'number' ? t.doneAt : (t.done ? 0 : null),
+        doneChangedAt: incomingDoneChangedAt,
         createdAt: t.createdAt || nowMs(),
         updatedAt: incomingUpdatedAt || nowMs(),
         sessionPresetId: t.sessionPresetId || 'deep',

@@ -137,6 +137,83 @@ describe('backup export/import (window.PomodoroBench)', () => {
       expect(t.doneAt).toBe(42);
       expect(result.updatedTasks).toBe(0);
     });
+
+    // The bug behind the screenshot: every task ticked on the phone stayed
+    // unticked on the laptop, because the laptop had counted a pomodoro (or
+    // renamed, or re-timed) each of them since — bumping updatedAt past the
+    // tick's stamp. `done` now rides on its own stamp.
+    const seedLocal = (over) => localStorage.setItem('pomodoroBench.tasks.v1', JSON.stringify([
+      Object.assign({ id: 't1', name: 'Anki', category: 'English', estimate: 4, completed: 2, done: false, doneAt: null, doneChangedAt: 0, createdAt: 1, updatedAt: 1, sessionPresetId: 'study', workMin: 25, breakMin: 5, notes: [] }, over)
+    ]));
+
+    it('a tick made elsewhere still arrives when this copy counted a pomodoro since (newer updatedAt)', async () => {
+      await mountApp();
+      seedLocal({ completed: 3, updatedAt: 900 }); // pomodoro counted here at 900
+      // Phone ticked it at 500 — older updatedAt than ours, but the only tick.
+      const result = window.PomodoroBench.applyIncomingBackup({
+        sessions: [],
+        tasks: [{ id: 't1', name: 'Anki', category: 'English', estimate: 4, completed: 2, done: true, doneAt: 500, doneChangedAt: 500, createdAt: 1, updatedAt: 500 }]
+      });
+      const t = tasks()[0];
+      expect(t.done).toBe(true);
+      expect(t.doneAt).toBe(500);
+      expect(t.completed).toBe(3); // our newer pomodoro count is kept
+      expect(result.updatedTasks).toBe(1);
+    });
+
+    it('a tick from a pre-stamp client (done + doneAt, no doneChangedAt) beats a locally-edited not-done', async () => {
+      await mountApp();
+      seedLocal({ updatedAt: 900 });
+      window.PomodoroBench.applyIncomingBackup({
+        sessions: [],
+        tasks: [{ id: 't1', name: 'Anki', category: 'English', estimate: 4, completed: 2, done: true, doneAt: 500, createdAt: 1 }]
+      });
+      expect(tasks()[0].done).toBe(true);
+    });
+
+    it('a newer edit of a not-done copy no longer un-ticks a task that was ticked', async () => {
+      await mountApp();
+      seedLocal({ done: true, doneAt: 500, doneChangedAt: 500, updatedAt: 500 });
+      // The other device renamed it at 900 without ever touching done.
+      window.PomodoroBench.applyIncomingBackup({
+        sessions: [],
+        tasks: [{ id: 't1', name: 'Anki deck', category: 'English', estimate: 4, completed: 2, done: false, doneAt: null, doneChangedAt: 0, createdAt: 1, updatedAt: 900 }]
+      });
+      const t = tasks()[0];
+      expect(t.name).toBe('Anki deck'); // the rename applies
+      expect(t.done).toBe(true); // the tick survives
+      expect(t.doneAt).toBe(500);
+    });
+
+    it('a deliberate later un-tick wins over an earlier tick', async () => {
+      await mountApp();
+      seedLocal({ done: true, doneAt: 500, doneChangedAt: 500, updatedAt: 500 });
+      window.PomodoroBench.applyIncomingBackup({
+        sessions: [],
+        tasks: [{ id: 't1', name: 'Anki', category: 'English', estimate: 4, completed: 2, done: false, doneAt: null, doneChangedAt: 700, createdAt: 1, updatedAt: 700 }]
+      });
+      const t = tasks()[0];
+      expect(t.done).toBe(false);
+      expect(t.doneAt).toBeNull();
+      expect(t.doneChangedAt).toBe(700);
+    });
+
+    it('ticking a task locally stamps doneChangedAt, and loading backfills it for older tasks', async () => {
+      const els = await mountApp();
+      addTaskViaForm(els, 'Stamp me', 'Work', 1);
+      expect(tasks()[0].doneChangedAt).toBe(0);
+      els.taskList.querySelector('[data-action="toggle-done"]').click();
+      expect(tasks()[0].doneChangedAt).toBeGreaterThan(0);
+      expect(tasks()[0].doneChangedAt).toBe(tasks()[0].doneAt);
+
+      localStorage.setItem('pomodoroBench.tasks.v1', JSON.stringify([
+        { id: 'old-done', name: 'A', done: true, doneAt: 123, createdAt: 1 },
+        { id: 'old-open', name: 'B', done: false, createdAt: 1 }
+      ]));
+      await mountApp();
+      expect(tasks().find((t) => t.id === 'old-done').doneChangedAt).toBe(123);
+      expect(tasks().find((t) => t.id === 'old-open').doneChangedAt).toBe(0);
+    });
   });
 
   // A farm is the one thing in here you cannot get back by working again: the

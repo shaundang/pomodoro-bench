@@ -163,6 +163,59 @@ ngay lúc đọc. Hai chỗ rủi ro đã được sửa:
   active** giống như tick tại máy — trừ khi đang chạy một phiên trên task đó,
   phiên ấy được kết thúc dưới đúng task đã bắt đầu.
 
+### Done đi riêng một stamp: `doneChangedAt` (đã sửa)
+
+Triệu chứng: tick done hàng loạt task trên điện thoại, mở laptop vẫn thấy tất cả
+chưa done — và có khi tick xong trên điện thoại rồi thấy nó **bật lại**. Nguyên
+nhân: merge quyết định mọi trường, kể cả `done`, bằng một stamp `updatedAt`
+chung. Trên laptop, chỉ cần **chạy xong một pomodoro** trên task đó (tăng
+`completed`), đổi tên, hay chỉnh session length khi task đang active, là
+`updatedAt` của laptop mới hơn; lệnh done từ điện thoại mang stamp cũ hơn nên
+thua vĩnh viễn, rồi laptop push lên và **ghi `done: false` đè ngược lại** điện
+thoại.
+
+Giờ `done` có stamp riêng `doneChangedAt`, ghi lúc `done` **đổi chiều** (tick hoặc
+bỏ tick). Trong `applyIncomingBackup`, `updatedAt` vẫn quyết định tên, category,
+estimate, completed, notes, session length; còn `done`/`doneAt` chỉ so
+`doneChangedAt` với nhau: **chỉ một lần bỏ tick muộn hơn mới thắng được một lần
+tick**, đếm pomodoro hay đổi tên không liên quan. Task cũ chưa có stamp thì
+mượn `doneAt` nếu đang done, còn chưa done thì là `0` — nên một lần tick thật ở
+bất kỳ máy nào cũng thắng bản chưa done kiểu cũ. Hòa stamp mà bên đến là done
+thì nhận done (cầu nối cho task tick trước khi có stamp), nhưng hòa mà bên đến
+chưa done thì không bao giờ bỏ tick của ai.
+
+### Khi nào sync push (đã sửa)
+
+Trước đây `js/sync.js` chỉ push theo **poll 4 giây + debounce 1.5 giây**, và sau
+mỗi lần pull thì coi bản local là "đã push rồi". Hai lỗ hổng:
+
+- Tick done trên điện thoại rồi khoá máy trong ~5 giây là timer không bao giờ
+  chạy, lệnh push nằm lại đến lần mở app sau. Giờ mọi `saveTasks/saveSessions/
+  saveCategories/saveCustomPresets` phát sự kiện `pomodoroBench:changed`, sync
+  push ngay sau debounce ngắn; **tab bị ẩn hoặc unload thì push tức thì**, bỏ
+  debounce. Poll giữ lại làm lưới an toàn, thưa hơn (15 giây).
+- Sau khi pull, nếu bản local **thắng** merge (hoặc có thứ remote chưa có) thì
+  local khác remote nhưng không được push lại — kẹt ở đó cho tới khi máy này
+  tình cờ sửa gì khác. Giờ mốc so sánh là fingerprint của **document remote vừa
+  nhận**, local khác thì push. Hội tụ: khi local trùng remote, fingerprint bằng
+  nhau và lần push lên lịch chỉ là no-op.
+
+Fingerprint task giờ gồm cả `done` và `doneChangedAt`, vì merge có thể lật `done`
+mà không đụng `updatedAt`.
+
+### Cache trên GitHub Pages: vì sao có con số 10 phút
+
+GitHub Pages trả `Cache-Control: max-age=600` cho **mọi** file, không cấu hình
+được. Nghĩa là trình duyệt được phép dùng bản đã tải trong 10 phút mà không hỏi
+lại server; reload thường của Chrome chỉ kiểm tra lại file HTML, còn `app.js`,
+`sync.js` còn "tươi" thì lấy từ cache. Vì thế `index.html` gắn `?v=N` vào hai
+script: đổi `N` là URL mới, cache cũ không khớp nữa. **Mỗi lần sửa `js/app.js`
+hoặc `js/sync.js` phải tăng `?v=` tương ứng** — ba commit ngày 2026-09-05 quên
+bước này nên hai máy chạy hai phiên bản khác nhau trong lúc test sync. Độ trễ
+còn lại là ~1 phút GitHub Pages build cộng tối đa 10 phút cache của chính file
+`index.html`; muốn nhanh hơn nữa thì phải đổi hosting (Firebase Hosting, Netlify)
+để tự đặt header `no-cache` cho HTML.
+
 Vẫn còn để đó, chưa sửa: `loadSessions()` và các loader khác vẫn theo mẫu cũ
 `catch → []`, cùng kiểu rủi ro ghi đè khi storage hỏng. Task đã done cũng không
 bao giờ bị xoá khỏi storage (chỉ ẩn khỏi list từ ngày hôm sau), nên document
