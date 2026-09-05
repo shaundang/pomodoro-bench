@@ -367,10 +367,28 @@
     }
   }
 
+  // 8 hues (see css/style.css --catclr-0..7: blue, orange, aqua, yellow,
+  // magenta, green, violet, red) so categories read as visibly different at
+  // a glance rather than a handful of near-duplicates. The set and order
+  // are validated per the dataviz skill's color-formula (OKLCH lightness
+  // band, chroma floor, CVD-simulated adjacent-pair separation) rather than
+  // hand-picked — the previous 6-color set looked like only ~3 colors in
+  // practice for two separate reasons, both fixed here: this hash used to
+  // be a plain "sum of char codes mod N", which is heavily biased for short
+  // lowercase-ish English words (letter codes cluster mod 6), so most
+  // category names collapsed onto the same 2-3 buckets even though more
+  // colors existed; and, independently, several of those 6 hues (e.g. the
+  // teal and the magenta) were too close together to tell apart even with
+  // a perfectly fair hash. Multiplying-and-folding each character in (a
+  // classic string hash) mixes the bits far better and spreads names evenly
+  // across all the buckets.
+  var CATEGORY_COLOR_COUNT = 8;
   function categoryColorIndex(name){
     var hash = 0;
-    for(var i=0;i<name.length;i++){ hash = (hash + name.charCodeAt(i)) % 6; }
-    return hash;
+    for(var i=0;i<name.length;i++){
+      hash = (hash * 31 + name.charCodeAt(i)) >>> 0; // >>>0 keeps it a safe 32-bit uint
+    }
+    return hash % CATEGORY_COLOR_COUNT;
   }
 
   function categoryColorClass(name){
@@ -7831,13 +7849,18 @@
   // ---------- external integration hook (used by js/sync.js) ----------
   // Exposes just enough for the optional multi-device sync module to read/
   // merge data the same way file import already does, without reaching
-  // into any other internals of this closure.
+  // into any other internals of this closure. categoryColorIndex/Class are
+  // exposed too, purely so tests can assert on the hash's distribution
+  // directly instead of rendering N tasks and scraping class names.
   window.PomodoroBench = {
     STORAGE_SESSIONS: STORAGE_SESSIONS,
     STORAGE_TASKS: STORAGE_TASKS,
     STORAGE_CATEGORIES: STORAGE_CATEGORIES,
     buildBackupData: buildBackupData,
-    applyIncomingBackup: applyIncomingBackup
+    applyIncomingBackup: applyIncomingBackup,
+    categoryColorIndex: categoryColorIndex,
+    categoryColorClass: categoryColorClass,
+    CATEGORY_COLOR_COUNT: CATEGORY_COLOR_COUNT
   };
 
 })();

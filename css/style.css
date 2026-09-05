@@ -15,12 +15,25 @@
   --accent-glow: rgba(193,68,45,0.35);
   --focus-ring: #8E9A73;
 
-  --catclr-0-bg:#DCE7F5; --catclr-0-fg:#2B4C7E;
-  --catclr-1-bg:#DCEEDD; --catclr-1-fg:#2F6B3A;
-  --catclr-2-bg:#E9E0F5; --catclr-2-fg:#5B3E8E;
-  --catclr-3-bg:#F5EBD3; --catclr-3-fg:#8A6A20;
-  --catclr-4-bg:#DCEFEF; --catclr-4-fg:#2A6B6B;
-  --catclr-5-bg:#F5DEE9; --catclr-5-fg:#8A3D63;
+  /* Categorical palette (8 hues: blue, orange, aqua, yellow, magenta, green,
+     violet, red) — one hue per index, chosen and ordered per a color-formula
+     method: fixed hue anchors, then each hue's exact light/dark tone picked
+     so every slot clears the OKLCH lightness band and the 0.10 chroma floor
+     and, as a set, the CVD-simulated adjacent-pair separation (checked
+     against this app's own surfaces, #EEF0E8 light / #1B1D16 dark — re-run
+     that check with any future edit here rather than eyeballing a new hex).
+     The previous 6-color set looked like only ~3 colors in practice because
+     its plain sum-of-char-codes hash was biased (see categoryColorIndex
+     below) *and*, independently, several of its hues were too close
+     together to tell apart even with a fair hash. */
+  --catclr-0-bg:#DDE7F3; --catclr-0-fg:#2677D9;
+  --catclr-1-bg:#F3E3DD; --catclr-1-fg:#D95926;
+  --catclr-2-bg:#DDF3EB; --catclr-2-fg:#1A9368;
+  --catclr-3-bg:#F3ECDD; --catclr-3-fg:#B08221;
+  --catclr-4-bg:#F3DDE5; --catclr-4-fg:#D92669;
+  --catclr-5-bg:#DDF3DD; --catclr-5-fg:#1A601A;
+  --catclr-6-bg:#E0DDF3; --catclr-6-fg:#4026D9;
+  --catclr-7-bg:#F3DDDD; --catclr-7-fg:#D92726;
 
   --heat-0:#DEE1D3; --heat-1:#BFE1C4; --heat-2:#8FCB9A; --heat-3:#55A868; --heat-4:#2F7A44;
 
@@ -50,12 +63,14 @@
     --accent-glow: rgba(225,115,79,0.4);
     --focus-ring: #A9B58A;
 
-    --catclr-0-bg:#1E2C3D; --catclr-0-fg:#9DBFE8;
-    --catclr-1-bg:#1E2E22; --catclr-1-fg:#8FC79A;
-    --catclr-2-bg:#2A2338; --catclr-2-fg:#C3A9EA;
-    --catclr-3-bg:#332B18; --catclr-3-fg:#E0BE72;
-    --catclr-4-bg:#1C2E2E; --catclr-4-fg:#82C4C4;
-    --catclr-5-bg:#33202A; --catclr-5-fg:#E29AC0;
+    --catclr-0-bg:#1A2A3D; --catclr-0-fg:#2677D9;
+    --catclr-1-bg:#3D241A; --catclr-1-fg:#D95926;
+    --catclr-2-bg:#1A3D30; --catclr-2-fg:#1FAD7A;
+    --catclr-3-bg:#3D321A; --catclr-3-fg:#BC8C24;
+    --catclr-4-bg:#3D1A27; --catclr-4-fg:#D92669;
+    --catclr-5-bg:#1A3D1A; --catclr-5-fg:#1FB21F;
+    --catclr-6-bg:#1F1A3D; --catclr-6-fg:#9488D7;
+    --catclr-7-bg:#3D1A1A; --catclr-7-fg:#D92726;
 
     --heat-0:#262A20; --heat-1:#1F3B28; --heat-2:#2C5C39; --heat-3:#3E8A52; --heat-4:#57C26E;
 
@@ -85,12 +100,14 @@
   --accent-glow: rgba(225,115,79,0.4);
   --focus-ring: #A9B58A;
 
-  --catclr-0-bg:#1E2C3D; --catclr-0-fg:#9DBFE8;
-  --catclr-1-bg:#1E2E22; --catclr-1-fg:#8FC79A;
-  --catclr-2-bg:#2A2338; --catclr-2-fg:#C3A9EA;
-  --catclr-3-bg:#332B18; --catclr-3-fg:#E0BE72;
-  --catclr-4-bg:#1C2E2E; --catclr-4-fg:#82C4C4;
-  --catclr-5-bg:#33202A; --catclr-5-fg:#E29AC0;
+  --catclr-0-bg:#1A2A3D; --catclr-0-fg:#2677D9;
+  --catclr-1-bg:#3D241A; --catclr-1-fg:#D95926;
+  --catclr-2-bg:#1A3D30; --catclr-2-fg:#1FAD7A;
+  --catclr-3-bg:#3D321A; --catclr-3-fg:#BC8C24;
+  --catclr-4-bg:#3D1A27; --catclr-4-fg:#D92669;
+  --catclr-5-bg:#1A3D1A; --catclr-5-fg:#1FB21F;
+  --catclr-6-bg:#1F1A3D; --catclr-6-fg:#9488D7;
+  --catclr-7-bg:#3D1A1A; --catclr-7-fg:#D92726;
 
   --heat-0:#262A20; --heat-1:#1F3B28; --heat-2:#2C5C39; --heat-3:#3E8A52; --heat-4:#57C26E;
 
@@ -516,6 +533,8 @@ button{font-family:inherit;}
 .cat-color-3{background:var(--catclr-3-bg); color:var(--catclr-3-fg);}
 .cat-color-4{background:var(--catclr-4-bg); color:var(--catclr-4-fg);}
 .cat-color-5{background:var(--catclr-5-bg); color:var(--catclr-5-fg);}
+.cat-color-6{background:var(--catclr-6-bg); color:var(--catclr-6-fg);}
+.cat-color-7{background:var(--catclr-7-bg); color:var(--catclr-7-fg);}
 .cat-inline-select{
   font-family:"Work Sans", sans-serif;
   font-size:0.72rem;
@@ -747,6 +766,8 @@ button{font-family:inherit;}
 .skill-row .cat-bar-fill.cat-color-3{background:var(--catclr-3-fg);}
 .skill-row .cat-bar-fill.cat-color-4{background:var(--catclr-4-fg);}
 .skill-row .cat-bar-fill.cat-color-5{background:var(--catclr-5-fg);}
+.skill-row .cat-bar-fill.cat-color-6{background:var(--catclr-6-fg);}
+.skill-row .cat-bar-fill.cat-color-7{background:var(--catclr-7-fg);}
 /* Declared after the colour rules and at the same specificity (three classes
    each), so reaching the goal overrides the skill colour instead of losing to
    it. Order is what decides here, not weight. */
