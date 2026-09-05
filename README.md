@@ -136,6 +136,38 @@ pomodoro, mỗi dòng gồm 2 phần: **số pomodoro** (ô số nhỏ) và **de
 pomodoro ước tính — bấm "+ Add note" để thêm dòng, ✕ trên từng dòng để xoá.
 Card ngoài (chưa mở edit) hiện gọn 1 chỉ báo "📝 N" nếu task có ghi chú.
 
+## Lưu task trong localStorage (đã sửa)
+
+Task nằm ở key `pomodoroBench.tasks.v1`, **không có cache trong bộ nhớ**: mọi
+thao tác đều là `loadTasks()` → sửa mảng → `saveTasks()`, nên bản trong storage
+luôn là nguồn sự thật duy nhất. `loadTasks()` kiêm luôn migration: task thiếu
+trường nào (`updatedAt`, `doneAt`, `notes`, ...) thì được bù mặc định và ghi lại
+ngay lúc đọc. Hai chỗ rủi ro đã được sửa:
+
+- **Storage hỏng không còn bị ghi đè mất.** Trước đây `loadTasks()` bắt mọi lỗi
+  và trả về `[]`, nên một key bị hỏng (JSON không parse được, hoặc có phần tử
+  rác làm migration ném lỗi) sẽ bị **lần thêm/sửa/xoá kế tiếp ghi một list mới
+  lên trên** — mất toàn bộ task cũ, không cảnh báo. Giờ nội dung không đọc được
+  sẽ được **cất sang key `pomodoroBench.tasks.v1.corrupt`** trước khi trả về
+  `[]`; key này chỉ ghi một lần, lần hỏng sau không đè lên bản đầu, người dùng
+  có thể tự khôi phục bằng tay từ đó. Phần tử rác trong mảng (`null`, chuỗi...)
+  thì **bị lọc bỏ từng phần tử**, task thật vẫn giữ nguyên.
+- **Task đang active được đồng bộ sau một lần sync pull.** Tên và category của
+  task active được copy vào timer state (`pomodoroBench.timer.v1`) để header và
+  `logSession` dùng thẳng, không cần tra lại. Sửa tại máy thì các bản copy này
+  được cập nhật, nhưng `applyIncomingBackup` (pull từ Firebase hoặc import
+  file) ghi lại task mà **không chạm vào chúng** — kết quả là đổi tên task ở
+  máy khác thì máy này vẫn log session dưới tên cũ, và task đã tick done ở máy
+  khác vẫn đang active ở đây. Giờ sau khi merge task xong, `reconcileActiveTask`
+  đọc lại task active: tên/category đi theo bản merge, và **done từ xa thì bỏ
+  active** giống như tick tại máy — trừ khi đang chạy một phiên trên task đó,
+  phiên ấy được kết thúc dưới đúng task đã bắt đầu.
+
+Vẫn còn để đó, chưa sửa: `loadSessions()` và các loader khác vẫn theo mẫu cũ
+`catch → []`, cùng kiểu rủi ro ghi đè khi storage hỏng. Task đã done cũng không
+bao giờ bị xoá khỏi storage (chỉ ẩn khỏi list từ ngày hôm sau), nên document
+Firestore sẽ lớn dần theo thời gian; sync đẩy toàn bộ task lên mỗi lần.
+
 ## Màu session length trên task card
 
 Mỗi preset ở "Session length" (Deep work, Writing, Study & practice, …) có
