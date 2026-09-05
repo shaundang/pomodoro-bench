@@ -1282,6 +1282,62 @@
     renderTimer();
   }
 
+  // Pomodoros finished per task, counted from the session log: one entry
+  // per focus session that ran to term and carries this task's id. The log
+  // is the record of what actually happened and has always synced fully
+  // (additive by id), whereas t.completed is a separate counter that used
+  // to stay behind on the device it was bumped on. Sessions logged before
+  // sessions carried a taskId cannot be attributed and are not counted.
+  function completedBySessions(sessions){
+    var by = {};
+    (sessions || loadSessions()).forEach(function(s){
+      if(!s || !s.taskId) return;
+      if(s.type === 'break' || s.status !== 'completed') return;
+      by[s.taskId] = (by[s.taskId] || 0) + 1;
+    });
+    return by;
+  }
+
+  // What the card shows: never less than the stored counter (old sessions
+  // without a taskId still count there), never less than what the log
+  // proves happened.
+  function effectiveCompleted(t, bySessions){
+    var derived = (bySessions && bySessions[t.id]) || 0;
+    return Math.max(typeof t.completed === 'number' ? t.completed : 0, derived);
+  }
+
+  // One-time repair of the stored counters from the log: any task whose
+  // log count is higher gets its counter raised to match, so the number in
+  // the store and the number on the card agree again. Idempotent — a second
+  // run finds nothing to raise. With `forward` the raise is also written to
+  // the task store as an absolute value (js/sync.js runs it once the cache
+  // mirrors the store); without it only the local cache changes and no
+  // pending op is recorded, because a signed-out repair will simply run
+  // again, against the store's copy, after the next sign-in.
+  function repairCompletedCounts(opts){
+    var forward = !!(opts && opts.forward);
+    var by = completedBySessions();
+    var tasks = loadTasks();
+    var raised = [];
+    tasks.forEach(function(t){
+      var derived = by[t.id] || 0;
+      if(derived > t.completed){
+        t.completed = derived;
+        t.updatedAt = nowMs();
+        raised.push(t);
+      }
+    });
+    if(!raised.length) return 0;
+    saveTasks(tasks);
+    if(forward){
+      raised.forEach(function(t){
+        forwardTaskOp({type:'update', id: t.id, fields: {completed: t.completed, updatedAt: t.updatedAt}});
+      });
+    }
+    renderTasks();
+    return raised.length;
+  }
+
   function incrementTaskCompleted(id){
     if(!id) return;
     var tasks = loadTasks();
@@ -1317,7 +1373,12 @@
       return;
     }
     var categories = loadCategories();
-    tasks.forEach(function(t){
+    var bySessions = completedBySessions();
+    tasks.forEach(function(stored){
+      // A display copy: the card shows the count the log proves, without
+      // the render itself writing anything back (repairCompletedCounts
+      // does that, once, on purpose).
+      var t = Object.assign({}, stored, {completed: effectiveCompleted(stored, bySessions)});
       if(t.id === editingTaskId){
         var editLi = buildTaskEditCard(t);
         els.taskList.appendChild(editLi);
@@ -8052,6 +8113,7 @@
   wireCategoryPicker(els.newTaskCategory, els.newTaskCategoryCreate, '', function(){ updateCategoryFormAvailability(); });
   updateCategoryFormAvailability();
   renderTasks();
+  repairCompletedCounts({forward: false});
 
   if(state.running && state.remainingMs > 0){
     startTicking();
@@ -8083,6 +8145,7 @@
     replaceTasksFromRemote: replaceTasksFromRemote,
     takePendingTaskOps: takePendingTaskOps,
     backupTasksCache: backupTasksCache,
+    repairCompletedCounts: repairCompletedCounts,
     categoryColorIndex: categoryColorIndex,
     categoryColorClass: categoryColorClass,
     CATEGORY_COLOR_COUNT: CATEGORY_COLOR_COUNT

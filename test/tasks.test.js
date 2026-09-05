@@ -182,4 +182,57 @@ describe('task list', () => {
       expect(localStorage.getItem(KEYS.tasks + '.pending')).toBeNull(); // a mirror write is not a user change
     });
   });
+  // The card's pomodoro count and the session log are two records of the
+  // same fact. The log always synced fully; the counter did not. The card
+  // now shows whichever is higher, and the counter is raised to match once.
+  describe('completed count vs. the session log', () => {
+    const seedTask = (over) => localStorage.setItem(KEYS.tasks, JSON.stringify([
+      Object.assign({ id: 'T', name: 'Fix bug cronjob', category: 'Learning', estimate: 1, completed: 0, done: false, doneAt: null, doneChangedAt: 0, createdAt: 1, updatedAt: 1, sessionPresetId: 'study', workMin: 25, breakMin: 5, notes: [] }, over)
+    ]));
+    const session = (over) => Object.assign({ id: 's' + Math.random(), date: '2026-09-04', category: 'Learning', task: 'Fix bug cronjob', taskId: 'T', minutes: 25, timestamp: 1, status: 'completed', type: 'focus' }, over);
+
+    it('shows the pomodoros the log proves, even when the stored counter says 0, and repairs the counter', async () => {
+      seedTask();
+      localStorage.setItem(KEYS.sessions, JSON.stringify([session(), session({ type: 'break', minutes: 5 })]));
+      const els = await mountApp();
+      expect(els.taskList.querySelector('.task-progress-text').textContent).toBe('1/1 🍅');
+      expect(tasks()[0].completed).toBe(1); // raised in the cache at boot
+      expect(localStorage.getItem(KEYS.tasks + '.pending')).toBeNull(); // no pending op: the signed-in repair runs against the store's copy
+    });
+
+    it('does not count skipped sessions, sessions without a taskId, or other tasks', async () => {
+      seedTask();
+      localStorage.setItem(KEYS.sessions, JSON.stringify([
+        session({ status: 'skipped' }),
+        session({ taskId: null }),
+        session({ taskId: 'someone-else' })
+      ]));
+      const els = await mountApp();
+      expect(els.taskList.querySelector('.task-progress-text').textContent).toBe('0/1 🍅');
+      expect(tasks()[0].completed).toBe(0);
+    });
+
+    it('never lowers a stored counter that is higher than the log (old sessions had no taskId)', async () => {
+      seedTask({ completed: 3, estimate: 4 });
+      localStorage.setItem(KEYS.sessions, JSON.stringify([session()]));
+      const els = await mountApp();
+      expect(els.taskList.querySelector('.task-progress-text').textContent).toBe('3/4 🍅');
+      expect(tasks()[0].completed).toBe(3);
+    });
+
+    it('repairCompletedCounts with forward writes the raised counter as an absolute value, once', async () => {
+      seedTask();
+      localStorage.setItem(KEYS.sessions, JSON.stringify([session(), session()]));
+      await mountApp(); // boot repair already raised the cache to 2
+      const ops = [];
+      window.PomodoroBench.setTaskBackend({ apply: (op) => ops.push(op) });
+      expect(window.PomodoroBench.repairCompletedCounts({ forward: true })).toBe(0); // nothing left to raise
+
+      localStorage.setItem(KEYS.sessions, JSON.stringify([session(), session(), session()]));
+      expect(window.PomodoroBench.repairCompletedCounts({ forward: true })).toBe(1);
+      expect(ops).toHaveLength(1);
+      expect(ops[0]).toMatchObject({ type: 'update', id: 'T', fields: { completed: 3 } });
+      expect(tasks()[0].completed).toBe(3);
+    });
+  });
 });

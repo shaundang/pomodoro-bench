@@ -346,6 +346,10 @@ function startSyncingFor(uid){
         try{ PB().replaceTasksFromRemote(snap.docs.map(function(d){ return d.data(); })); }
         catch(e){ /* keep the cache we have */ }
         applyingRemote = false;
+        // The cache now mirrors the store, so a counter the session log
+        // proves too low can be raised in the store itself. Idempotent:
+        // the snapshot this write causes finds nothing more to raise.
+        try{ PB().repairCompletedCounts({forward: true}); }catch(e){ /* cosmetic */ }
       }, reportError('Sync error (tasks)'));
 
       // 4. The user document for everything else.
@@ -357,6 +361,8 @@ function startSyncingFor(uid){
         try{ PB().applyIncomingBackup(remote); }
         catch(e){ /* nothing new to merge */ }
         applyingRemote = false;
+        // Sessions from another device may prove more pomodoros on a task.
+        try{ PB().repairCompletedCounts({forward: true}); }catch(e){ /* cosmetic */ }
         // The baseline is what the remote actually holds — not our merged
         // local. If local now differs (local has items the remote lacks),
         // that difference has to be pushed, or it stays stranded here.

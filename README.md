@@ -205,6 +205,25 @@ deploy thủ công: `npx firebase-tools deploy --only firestore:rules`. Chưa de
 thì client báo "Could not connect: Missing or insufficient permissions" và chạy
 tiếp bằng local, không mất gì.
 
+### Số pomodoro trên card đếm từ session log (đã sửa)
+
+Triệu chứng: Statistics có một phiên focus hoàn thành gắn với task, nhưng card
+vẫn `0/1 🍅`. Nguyên nhân: khi hết giờ app ghi **hai nơi** — một dòng vào
+`sessions` (Statistics vẽ từ đây) và cộng 1 vào `completed` của task (card vẽ từ
+đây). Sessions luôn sync cộng thêm theo id nên tới đủ mọi máy; `completed` nằm
+trong task và dưới sync cũ không bao giờ sang máy khác, rồi bị bản `0` ghi đè.
+Hai nơi lưu một sự thật thì lệch.
+
+Giờ card hiện **số lớn hơn** giữa `completed` đang lưu và số phiên focus
+`status: 'completed'` có `taskId` bằng id task trong log
+(`completedBySessions`, `effectiveCompleted`). Skip không tính, break không tính,
+session cũ chưa có `taskId` không quy được nên chỉ giữ số đang lưu, không bao giờ
+hạ. `repairCompletedCounts` nâng `completed` trong kho lên bằng số log chứng minh
+được: lúc mở app thì chỉ sửa cache; khi đã đăng nhập thì chạy sau mỗi snapshot
+của collection và của document user, ghi `updateDoc` với **giá trị tuyệt đối**
+vào document task. Idempotent, lần chạy sau không còn gì để nâng. Hoàn thành phiên
+mới vẫn là `increment(1)` nguyên tử.
+
 ### Done đi riêng một stamp: `doneChangedAt` (đã sửa)
 
 Triệu chứng: tick done hàng loạt task trên điện thoại, mở laptop vẫn thấy tất cả

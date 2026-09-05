@@ -387,6 +387,24 @@ describe('sync.js — signed in, one document per task', () => {
     expect(store.get(USER).sessions).toHaveLength(1);
   });
 
+  it('a counter the session log proves too low is raised in the store, as an absolute value', async () => {
+    const { updateDoc } = await import(FIRESTORE_URL);
+    store.set(USER, {
+      sessions: [{ id: 'sess-1', date: '2026-09-04', category: 'Learning', task: 'Fix bug cronjob', taskId: 'T', minutes: 25, timestamp: 1, status: 'completed', type: 'focus' }],
+      categories: [], presets: [], tasksMigratedAt: 'SERVER_TS'
+    });
+    store.set(`${TASKS}/T`, { id: 'T', name: 'Fix bug cronjob', category: 'Learning', estimate: 1, completed: 0, done: false, doneAt: null, doneChangedAt: 0, createdAt: 1, updatedAt: 1, sessionPresetId: 'study', workMin: 25, breakMin: 5, notes: [] });
+    const els = await mountAppAndSync();
+
+    await signIn();
+
+    expect(taskDoc('T').completed).toBe(1);
+    const raise = updateDoc.mock.calls.filter((c) => c[0].path === `${TASKS}/T`);
+    expect(raise).toHaveLength(1); // once — the snapshot it causes finds nothing more to raise
+    expect(raise[0][1].completed).toBe(1);
+    expect(els.taskList.querySelector('.task-progress-text').textContent).toBe('1/1 🍅');
+  });
+
   it('edits made while signed out are uploaded on the next sign-in, and only those', async () => {
     const { setDoc } = await import(FIRESTORE_URL);
     const els = await signedInWith('Edited offline', 'Untouched');

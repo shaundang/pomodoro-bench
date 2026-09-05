@@ -22,12 +22,19 @@ export default defineConfig({
     // Two details worth keeping:
     //   * execArgv, not the parent process's flags — the tests run in the child,
     //     and a child does not inherit --max-old-space-size.
-    //   * singleFork, because two children each allowed 8GB is how the machine
-    //     runs out of memory rather than the suite.
+    //   * one fork at a time (min/maxForks 1), because two children each
+    //     allowed 8GB is how the machine runs out of memory rather than the
+    //     suite. But NOT singleFork: that reused one child for all 12 files,
+    //     and the mounted app instances accumulated across files until the
+    //     suite died of heap exhaustion at ~175 tests. With isolate (the
+    //     default) and singleFork off, every file gets a fresh child, so the
+    //     heap resets between files and the cap only has to hold one file.
     pool: 'forks',
     poolOptions: {
       forks: {
-        singleFork: true,
+        singleFork: false,
+        minForks: 1,
+        maxForks: 1,
         execArgv: ['--max-old-space-size=8192']
       }
     }
