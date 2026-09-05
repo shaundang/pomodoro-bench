@@ -105,6 +105,11 @@
     hourChart: document.getElementById('hourChart'),
     hourChartTooltip: document.getElementById('hourChartTooltip'),
     peakHourNote: document.getElementById('peakHourNote'),
+    categoryTrendChart: document.getElementById('categoryTrendChart'),
+    trendChartTooltip: document.getElementById('trendChartTooltip'),
+    trendTitle: document.getElementById('trendTitle'),
+    trendLegend: document.getElementById('trendLegend'),
+    trendNote: document.getElementById('trendNote'),
     categoryAllList: document.getElementById('categoryAllList'),
     categoryRangeTabs: document.getElementById('categoryRangeTabs'),
     customRangePicker: document.getElementById('customRangePicker'),
@@ -182,7 +187,7 @@
   var lastDeleted = null; // {type:'session'|'task', data}
   var undoTimeout = null;
   var STORAGE_CATEGORY_RANGE = 'pomodoroBench.categoryRange.v1';
-  var categoryRange = 'all'; // 'day' | 'month' | 'year' | 'all' | 'custom' — which period the Insights charts show
+  var categoryRange = 'all'; // 'day' | 'week' | 'month' | 'year' | 'all' | 'custom' — which period the Insights charts show
   var STORAGE_CUSTOM_RANGE = 'pomodoroBench.customRange.v1';
   var customRangeFrom = ''; // 'YYYY-MM-DD', only meaningful when categoryRange === 'custom'
   var customRangeTo = '';
@@ -7376,13 +7381,899 @@
     els.hourChart.addEventListener('mouseleave', hideHourChartTooltip);
   }
 
-  // Filters sessions down to the period the "By category" chart's tabs ask
-  // for. 'day' = today, 'month' = this calendar month, 'year' = this calendar
-  // year, 'all' = everything ever logged.
+  // ---------- Insights: focus by category over time ----------
+  // Line chart, one line per category, for the same range as the other two
+  // Insights charts. The x-axis is a run of equal time buckets whose size
+  // follows the tab — hours for Day, days for Week/Month, months for Year
+  // and All time — so the same chart answers "when this week did I do
+  // English?" and "is Learning trending up this year?" without a separate
+  // widget for each. Buckets with nothing logged draw at 0 rather than as a
+  // gap, so rest days are visible as dips instead of vanishing.
+  //
+  // Many categories: every one gets a line, but only the TREND_COLORED
+  // biggest are drawn in their category hue — the rest are thin grey context
+  // (the standard "focus + context" answer to a spaghetti chart). Hovering a
+  // grey line lights it up and names it; the legend lists the coloured ones
+  // and folds the grey ones behind a "+N more" toggle.
+  //
+  // Two overlays sit on top of the category lines:
+  // - A dashed horizontal *average* line in the neutral ink color (never a
+  //   category hue, so it can't be mistaken for a series). It's the mean
+  //   total per bucket over the buckets that have already started — future
+  //   days of the current month don't drag it down. Selecting a category
+  //   turns it into that category's own average.
+  // - Clicking a legend chip or a line *selects* that category: it draws on
+  //   top at full strength while the others fade, and the tooltip leads
+  //   with it. Click again, or click empty canvas, to clear.
+  var TREND_DAY_NAMES = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  var TREND_COLORED = 5; // categories drawn in colour; the rest are grey context
+  var trendSelected = null; // category name currently highlighted, or null for all
+
+  function addDays(d, n){
+    var out = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    out.setDate(out.getDate() + n);
+    return out;
+  }
+  function parseDateKey(key){
+    var p = key.split('-');
+    return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+  }
+  function monthKey(d){
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+  }
+
+  // Describes the x-axis for a range: the ordered bucket keys, the label
+  // shown under each ('' leaves it unlabelled), a longer label for the
+  // tooltip, a per-session key function, the unit word for the title, and
+  // how many buckets have started as of now (for the average).
+  function trendAxis(range, sessions, allSessions){
+    var today = new Date();
+    var todayK = todayKey(today);
+    var keys = [], labels = [], titles = [], keyOf, unit, elapsed = 0;
+
+    function daily(from, to, labelEvery, withMonth){
+      unit = 'per day';
+      var cursor = from, i = 0;
+      while(cursor <= to){
+        var k = todayKey(cursor);
+        keys.push(k);
+        if(k <= todayK) elapsed++;
+        var lbl = withMonth ? (MONTH_NAMES[cursor.getMonth()] + ' ' + cursor.getDate()) : String(cursor.getDate());
+        labels.push(i % labelEvery === 0 ? lbl : '');
+        titles.push(TREND_DAY_NAMES[(cursor.getDay() + 6) % 7] + ', ' + MONTH_NAMES[cursor.getMonth()] + ' ' + cursor.getDate() + ', ' + cursor.getFullYear());
+        cursor = addDays(cursor, 1);
+        i++;
+      }
+      keyOf = function(s){ return s.date; };
+    }
+    function monthly(from, to){
+      unit = 'per month';
+      var cursor = new Date(from.getFullYear(), from.getMonth(), 1);
+      var end = new Date(to.getFullYear(), to.getMonth(), 1);
+      var nowM = monthKey(today);
+      var multiYear = cursor.getFullYear() !== end.getFullYear();
+      var count = (end.getFullYear() - cursor.getFullYear()) * 12 + (end.getMonth() - cursor.getMonth()) + 1;
+      var labelEvery = count > 24 ? 6 : (count > 12 ? 3 : 1);
+      var i = 0;
+      while(cursor <= end){
+        var mk = monthKey(cursor);
+        keys.push(mk);
+        if(mk <= nowM) elapsed++;
+        var lbl = MONTH_NAMES[cursor.getMonth()];
+        if(multiYear && (i === 0 || cursor.getMonth() === 0)) lbl += ' ' + cursor.getFullYear();
+        labels.push(i % labelEvery === 0 ? lbl : '');
+        titles.push(MONTH_NAMES[cursor.getMonth()] + ' ' + cursor.getFullYear());
+        cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+        i++;
+      }
+      keyOf = function(s){ return s.date.slice(0, 7); };
+    }
+    function weekly(from, to){
+      unit = 'per week';
+      var cursor = addDays(from, -((from.getDay() + 6) % 7)); // back to Monday
+      var i = 0;
+      while(cursor <= to){
+        var wkKey = todayKey(cursor);
+        keys.push(wkKey);
+        if(wkKey <= todayK) elapsed++;
+        var wkEnd = addDays(cursor, 6);
+        labels.push(i % 2 === 0 ? (MONTH_NAMES[cursor.getMonth()] + ' ' + cursor.getDate()) : '');
+        titles.push('Week of ' + MONTH_NAMES[cursor.getMonth()] + ' ' + cursor.getDate() + ' – ' + MONTH_NAMES[wkEnd.getMonth()] + ' ' + wkEnd.getDate());
+        cursor = addDays(cursor, 7);
+        i++;
+      }
+      keyOf = function(s){
+        var d = parseDateKey(s.date);
+        return todayKey(addDays(d, -((d.getDay() + 6) % 7)));
+      };
+    }
+
+    if(range === 'day'){
+      // Not used by the panel any more (Day shows a timeline instead), but
+      // kept so the axis description stays complete for every range.
+      unit = 'per hour';
+      var nowH = today.getHours();
+      for(var h = 0; h < 24; h++){
+        keys.push(String(h));
+        if(h <= nowH) elapsed++;
+        labels.push(h % 4 === 0 ? String(h).padStart(2, '0') : '');
+        titles.push(String(h).padStart(2, '0') + ':00–' + String((h + 1) % 24).padStart(2, '0') + ':00');
+      }
+      // Sessions predate the timestamp field in very old backups; those
+      // can't be placed within the day, so they fall out of this view only.
+      keyOf = function(s){ return s.timestamp ? String(new Date(s.timestamp).getHours()) : null; };
+    } else if(range === 'week'){
+      var wk = weekBounds(today);
+      daily(parseDateKey(wk[0]), parseDateKey(wk[1]), 1, false);
+      labels = TREND_DAY_NAMES.slice();
+    } else if(range === 'month'){
+      var first = new Date(today.getFullYear(), today.getMonth(), 1);
+      var last = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+      daily(first, last, 5, false);
+      labels[labels.length - 1] = String(last.getDate());
+    } else if(range === 'year'){
+      monthly(new Date(today.getFullYear(), 0, 1), new Date(today.getFullYear(), 11, 1));
+    } else if(range === 'custom'){
+      var fromKey = customRangeFrom, toKey = customRangeTo;
+      if(!fromKey || !toKey){
+        // An open-ended side falls back to the edge of the logged data.
+        var dates = allSessions.map(function(s){ return s.date; }).sort();
+        if(!fromKey) fromKey = dates[0] || todayK;
+        if(!toKey) toKey = dates[dates.length - 1] || todayK;
+      }
+      var f = parseDateKey(fromKey), t = parseDateKey(toKey);
+      if(t < f){ var tmp = f; f = t; t = tmp; }
+      var spanDays = Math.round((t - f) / 86400000) + 1;
+      if(spanDays <= 31) daily(f, t, spanDays > 14 ? 5 : (spanDays > 7 ? 2 : 1), true);
+      else if(spanDays <= 190) weekly(f, t);
+      else monthly(f, t);
+    } else {
+      // All time: from the first logged month through the current one.
+      var earliest = null;
+      allSessions.forEach(function(s){ if(!earliest || s.date < earliest) earliest = s.date; });
+      var startM = earliest ? parseDateKey(earliest) : today;
+      if(startM > today) startM = today;
+      monthly(startM, today);
+    }
+    return { keys: keys, labels: labels, titles: titles, keyOf: keyOf, unit: unit, elapsed: Math.max(1, elapsed) };
+  }
+
+  // Picks a y-axis top that the four gridlines divide into whole, readable
+  // minute values (e.g. 60 → 15/30/45/60, 240 → 60/120/180/240).
+  function trendNiceMax(maxMinutes){
+    var steps = [20, 40, 60, 120, 180, 240, 360, 480, 600, 720, 960, 1200, 1440, 1800, 2400, 3000, 3600, 4800, 6000, 7200, 9600, 12000];
+    for(var i = 0; i < steps.length; i++){ if(steps[i] >= maxMinutes) return steps[i]; }
+    return Math.ceil(maxMinutes / 2400) * 2400;
+  }
+
+  function fmtAxisMinutes(min){
+    return formatDuration(Math.round(min));
+  }
+
+  // ---------- Day range: today's timeline ----------
+  // A line-per-category chart of one day is just spikes (a 25-minute
+  // pomodoro is 0 → 25m → 0 across three hourly buckets) and duplicates the
+  // hour chart above it, so the Day tab swaps the trend panel for a
+  // timeline instead: one row per category, midnight to midnight across,
+  // each focus session drawn as a block at its real clock time and length.
+  // That answers the question a single day actually raises — what did I
+  // work on, when, and for how long — and the same legend/selection
+  // behaviour carries over so the panel doesn't feel like a different tool.
+  var TIMELINE_ROW_H = 26;
+  var TIMELINE_AXIS_H = 20;
+  var TIMELINE_LABEL_W = 96;
+
+  function fmtClock(ms){
+    var d = new Date(ms);
+    return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  }
+
+  function renderDayTimeline(sessions){
+    var canvas = els.categoryTrendChart;
+    var dayStart = new Date();
+    dayStart.setHours(0, 0, 0, 0);
+    var dayStartMs = dayStart.getTime();
+    var dayEndMs = dayStartMs + 86400000;
+
+    // Group sessions into blocks per category. `timestamp` is when the
+    // session finished, so the block runs backwards from it; one that
+    // started before midnight is clipped to the day.
+    var byCat = {};
+    sessions.forEach(function(s){
+      if(!s.timestamp) return; // very old backups lack it; nothing to place
+      var endMs = Math.min(s.timestamp, dayEndMs);
+      var startMs = Math.max(endMs - s.minutes * 60000, dayStartMs);
+      if(!byCat[s.category]) byCat[s.category] = { total: 0, blocks: [] };
+      byCat[s.category].total += s.minutes;
+      byCat[s.category].blocks.push({ start: startMs, end: endMs, session: s });
+    });
+    var rows = Object.keys(byCat).map(function(name){
+      return { name: name, total: byCat[name].total, blocks: byCat[name].blocks, colorIndex: categoryColorIndex(name), colored: true };
+    });
+    rows.sort(function(a, b){ return b.total - a.total; });
+    // No "Other" folding here, unlike the line chart: each row is named at
+    // the left, so identity never rests on the 8-hue palette, and a single
+    // day rarely touches more than a handful of categories anyway.
+
+    if(trendSelected !== null && !rows.some(function(r){ return r.name === trendSelected; })) trendSelected = null;
+    var selIdx = -1;
+    rows.forEach(function(r, i){ if(r.name === trendSelected) selIdx = i; });
+
+    els.trendTitle.textContent = "Focus by category · today's timeline";
+
+    var css = getComputedStyle(document.documentElement);
+    var lineColor = css.getPropertyValue('--line').trim();
+    var ink = css.getPropertyValue('--ink').trim();
+    var inkSoft = css.getPropertyValue('--ink-soft').trim();
+    var accent = css.getPropertyValue('--accent').trim();
+    var paperRaised = css.getPropertyValue('--paper-raised').trim();
+    var colors = rows.map(function(r){
+      return css.getPropertyValue('--catclr-' + r.colorIndex + '-fg').trim();
+    });
+
+    var padT = 6, padR = 10, padL = TIMELINE_LABEL_W;
+    var rowCount = Math.max(rows.length, 1);
+    var cssH = padT + rowCount * TIMELINE_ROW_H + TIMELINE_AXIS_H;
+    var dpr = window.devicePixelRatio || 1;
+    var cssW = canvas.clientWidth || 600;
+    canvas.style.height = cssH + 'px';
+    canvas.width = cssW * dpr;
+    canvas.height = cssH * dpr;
+    var ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    trendAnimToken++;
+    var myToken = trendAnimToken;
+
+    var plotW = cssW - padL - padR;
+    var axisY = padT + rowCount * TIMELINE_ROW_H;
+    function xAt(ms){ return padL + ((ms - dayStartMs) / 86400000) * plotW; }
+
+    renderTrendLegend(rows, colors, selIdx, 0, '', '');
+
+    // Hit targets for hover/click, filled in by draw().
+    var hits = [];
+    var geom = { mode: 'timeline', rows: rows, colors: colors, hits: hits, padL: padL, padT: padT, rowH: TIMELINE_ROW_H, axisY: axisY, cssW: cssW, cssH: cssH, selIdx: selIdx };
+    trendChartGeom = geom;
+
+    function truncate(text, maxW){
+      var measure = typeof ctx.measureText === 'function' ? function(t){ var m = ctx.measureText(t); return m && m.width ? m.width : t.length * 5.5; } : function(t){ return t.length * 5.5; };
+      if(measure(text) <= maxW) return text;
+      var t = text;
+      while(t.length > 1 && measure(t + '…') > maxW) t = t.slice(0, -1);
+      return t + '…';
+    }
+
+    function drawAxis(){
+      ctx.strokeStyle = lineColor;
+      ctx.lineWidth = 1;
+      ctx.fillStyle = inkSoft;
+      ctx.font = '9px "Work Sans", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'alphabetic';
+      for(var h = 0; h <= 24; h += 4){
+        var gx = Math.round(xAt(dayStartMs + h * 3600000)) + 0.5;
+        ctx.beginPath();
+        ctx.moveTo(gx, padT);
+        ctx.lineTo(gx, axisY);
+        ctx.stroke();
+        ctx.textAlign = h === 24 ? 'right' : (h === 0 ? 'left' : 'center');
+        ctx.fillText(String(h).padStart(2, '0'), gx, cssH - 6);
+      }
+      ctx.beginPath();
+      ctx.moveTo(padL, axisY + 0.5);
+      ctx.lineTo(cssW - padR, axisY + 0.5);
+      ctx.stroke();
+    }
+
+    function draw(progress, hoverBlock){
+      ctx.clearRect(0, 0, cssW, cssH);
+      hits.length = 0;
+      drawAxis();
+
+      rows.forEach(function(r, ri){
+        var rowTop = padT + ri * TIMELINE_ROW_H;
+        var dim = selIdx >= 0 && ri !== selIdx;
+        ctx.globalAlpha = dim ? 0.3 : 1;
+
+        // Row label in text ink; the block colour carries identity.
+        ctx.fillStyle = ri === selIdx ? ink : inkSoft;
+        ctx.font = (ri === selIdx ? '600 ' : '') + '10px "Work Sans", sans-serif';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(truncate(r.name, padL - 14), 4, rowTop + TIMELINE_ROW_H / 2);
+
+        if(ri > 0){
+          ctx.strokeStyle = lineColor;
+          ctx.globalAlpha = dim ? 0.3 : 0.6;
+          ctx.beginPath();
+          ctx.moveTo(padL, rowTop + 0.5);
+          ctx.lineTo(cssW - padR, rowTop + 0.5);
+          ctx.stroke();
+          ctx.globalAlpha = dim ? 0.3 : 1;
+        }
+
+        var blockH = TIMELINE_ROW_H - 10;
+        var blockY = rowTop + 5;
+        r.blocks.forEach(function(b){
+          var x = xAt(b.start);
+          var fullW = Math.max(2, xAt(b.end) - x);
+          var w = Math.max(2, fullW * progress);
+          hits.push({ x: x, w: fullW, y: blockY, h: blockH, row: ri, block: b });
+          ctx.fillStyle = colors[ri];
+          roundRectTop(ctx, x, blockY, w, blockH, 3);
+          ctx.fill();
+          if(hoverBlock === b){
+            ctx.strokeStyle = ink;
+            ctx.lineWidth = 1.5;
+            roundRectTop(ctx, x, blockY, w, blockH, 3);
+            ctx.stroke();
+          }
+        });
+        ctx.globalAlpha = 1;
+      });
+
+      // "Now" marker, so the empty stretch to the right reads as "not yet"
+      // rather than "nothing".
+      var nowX = Math.round(xAt(Math.min(nowMs(), dayEndMs))) + 0.5;
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 3]);
+      ctx.beginPath();
+      ctx.moveTo(nowX, padT);
+      ctx.lineTo(nowX, axisY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    geom.draw = draw;
+
+    if(rows.length === 0){
+      draw(1, null);
+      els.trendNote.textContent = 'No focus sessions logged today.';
+      hideTrendChartTooltip();
+      return;
+    }
+
+    animateProgress(450, function(p){
+      if(myToken !== trendAnimToken) return;
+      draw(p, null);
+    });
+
+    var scope = selIdx >= 0 ? [rows[selIdx]] : rows;
+    var count = 0, total = 0, first = Infinity, last = -Infinity;
+    scope.forEach(function(r){
+      r.blocks.forEach(function(b){
+        count++;
+        total += b.session.minutes;
+        if(b.start < first) first = b.start;
+        if(b.end > last) last = b.end;
+      });
+    });
+    var sessionsWord = count === 1 ? 'session' : 'sessions';
+    if(selIdx >= 0){
+      els.trendNote.textContent = rows[selIdx].name + ': ' + count + ' ' + sessionsWord + ' today, ' + formatDuration(total) +
+        ', from ' + fmtClock(first) + ' to ' + fmtClock(last) + '. Click it again to show every category.';
+    } else {
+      els.trendNote.textContent = count + ' ' + sessionsWord + ' today, ' + formatDuration(total) + ' in total, from ' +
+        fmtClock(first) + ' to ' + fmtClock(last) + '. Hover a block for the task; click a category to focus on it.';
+    }
+  }
+
+  function timelineHitAt(g, x, y){
+    for(var i = g.hits.length - 1; i >= 0; i--){
+      var h = g.hits[i];
+      if(x >= h.x - 2 && x <= h.x + h.w + 2 && y >= h.y && y <= h.y + h.h) return h;
+    }
+    return null;
+  }
+
+  function handleTimelineHover(evt, g){
+    var hit = timelineHitAt(g, evt.offsetX, evt.offsetY);
+    if(!hit){ hideTrendChartTooltip(); return; }
+    var s = hit.block.session;
+    var tip = els.trendChartTooltip;
+    tip.innerHTML = '<span class="tt-row"><span class="tt-dot" style="background:' + g.colors[hit.row] + '"></span><strong>' + escapeHtml(s.category) + '</strong></span>' +
+      ' <span class="tt-total">' + fmtClock(hit.block.start) + '–' + fmtClock(hit.block.end) + ' · ' + formatDuration(s.minutes) + '</span>' +
+      (s.task ? '<br>' + escapeHtml(s.task) : '');
+    var half = Math.min(110, g.cssW / 2);
+    tip.style.left = Math.max(half, Math.min(g.cssW - half, hit.x + hit.w / 2)) + 'px';
+    tip.hidden = false;
+    g.draw(1, hit.block);
+  }
+
+  function handleTimelineClick(evt, g){
+    var hit = timelineHitAt(g, evt.offsetX, evt.offsetY);
+    var rowIdx = -1;
+    if(hit) rowIdx = hit.row;
+    else if(evt.offsetX < g.padL){
+      // Clicking a row label selects that row too.
+      var ri = Math.floor((evt.offsetY - g.padT) / g.rowH);
+      if(ri >= 0 && ri < g.rows.length) rowIdx = ri;
+    }
+    if(rowIdx >= 0) setTrendSelection(g.rows[rowIdx].name);
+    else if(trendSelected !== null) setTrendSelection(trendSelected);
+  }
+
+  var trendAnimToken = 0;
+  var trendChartGeom = null; // geometry + series from the last render, for hover/click
+  var trendMoreOpen = false; // whether the legend's "+N more" list is expanded
+
+  function renderCategoryTrend(sessions, allSessions){
+    var canvas = els.categoryTrendChart;
+    if(!canvas) return;
+    if(categoryRange === 'day'){ renderDayTimeline(sessions); return; }
+    canvas.style.height = ''; // the timeline sizes itself per row; the line chart uses the stylesheet height
+    var axis = trendAxis(categoryRange, sessions, allSessions || sessions);
+    var n = axis.keys.length;
+    var idxOf = {};
+    axis.keys.forEach(function(k, i){ idxOf[k] = i; });
+
+    // Bucket minutes per category and rank by total. Every category gets a
+    // line; only the top few get a colour (focus + context): the rest draw
+    // as thin grey so the overall shape and the count stay visible without
+    // turning the chart into spaghetti, and any of them lights up on hover
+    // or click. This also sidesteps the 8-hue palette running out.
+    var byCat = {};
+    sessions.forEach(function(s){
+      var k = axis.keyOf(s);
+      if(k === null || !(k in idxOf)) return;
+      if(!byCat[s.category]) byCat[s.category] = { total: 0, values: new Array(n).fill(0) };
+      byCat[s.category].total += s.minutes;
+      byCat[s.category].values[idxOf[k]] += s.minutes;
+    });
+    var series = Object.keys(byCat).map(function(name){
+      return { name: name, total: byCat[name].total, values: byCat[name].values, colorIndex: categoryColorIndex(name) };
+    });
+    series.sort(function(a, b){ return b.total - a.total; });
+    // Hues follow the category (same as its chip everywhere else), so two
+    // of the coloured five can still hash to the same one; the smaller of
+    // the pair draws with long dashes so they stay tellable apart.
+    var seenHue = {};
+    series.forEach(function(sr, i){
+      sr.colored = i < TREND_COLORED;
+      sr.dashed = sr.colored && seenHue[sr.colorIndex] === true;
+      if(sr.colored) seenHue[sr.colorIndex] = true;
+    });
+
+    // A selection only survives while that category is still on the chart.
+    if(trendSelected !== null && !series.some(function(sr){ return sr.name === trendSelected; })) trendSelected = null;
+    var selIdx = -1;
+    series.forEach(function(sr, i){ if(sr.name === trendSelected) selIdx = i; });
+
+    var totals = new Array(n).fill(0);
+    var maxVal = 0;
+    series.forEach(function(sr){
+      sr.values.forEach(function(v, i){ totals[i] += v; if(v > maxVal) maxVal = v; });
+    });
+    var grand = totals.reduce(function(a, b){ return a + b; }, 0);
+    // The average follows the selection: all categories together, or just
+    // the highlighted one.
+    var avgBase = selIdx >= 0 ? series[selIdx].total : grand;
+    var avg = avgBase / axis.elapsed;
+    var avgLabel = selIdx >= 0 ? series[selIdx].name + ' average' : 'Average, all categories';
+
+    els.trendTitle.textContent = 'Focus by category over time · ' + axis.unit;
+
+    var dpr = window.devicePixelRatio || 1;
+    var cssW = canvas.clientWidth || 600;
+    var cssH = 200;
+    canvas.width = cssW * dpr;
+    canvas.height = cssH * dpr;
+    var ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    trendAnimToken++;
+    var myToken = trendAnimToken;
+
+    var css = getComputedStyle(document.documentElement);
+    var lineColor = css.getPropertyValue('--line').trim();
+    var lineStrong = css.getPropertyValue('--line-strong').trim() || lineColor;
+    var ink = css.getPropertyValue('--ink').trim();
+    var inkSoft = css.getPropertyValue('--ink-soft').trim();
+    var paperRaised = css.getPropertyValue('--paper-raised').trim();
+    // Every series knows its own hue; the grey ones only use it when lit.
+    var hues = series.map(function(sr){
+      return css.getPropertyValue('--catclr-' + sr.colorIndex + '-fg').trim();
+    });
+
+    var padL = 46, padR = 10, padT = 10, padB = 20;
+    var plotW = cssW - padL - padR;
+    var plotH = cssH - padT - padB;
+    var baseY = padT + plotH;
+    var stepX = n > 1 ? plotW / (n - 1) : 0;
+    // Lines stop at the current bucket: a day that hasn't happened yet isn't
+    // a day with zero focus, so the axis runs to the end of the period but
+    // the plot doesn't.
+    var drawn = Math.min(n, axis.elapsed);
+    function xAt(i){ return n > 1 ? padL + i * stepX : padL + plotW / 2; }
+
+    renderTrendLegend(series, hues, selIdx, avg, avgLabel, axis.unit);
+
+    if(series.length === 0 || maxVal <= 0){
+      ctx.strokeStyle = lineColor;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(padL, baseY + 0.5);
+      ctx.lineTo(cssW - padR, baseY + 0.5);
+      ctx.stroke();
+      ctx.fillStyle = inkSoft;
+      ctx.font = '9px "Work Sans", sans-serif';
+      ctx.textAlign = 'center';
+      axis.labels.forEach(function(lbl, i){ if(lbl) ctx.fillText(lbl, xAt(i), cssH - 6); });
+      els.trendNote.textContent = 'No focus sessions in this period.';
+      trendChartGeom = null;
+      hideTrendChartTooltip();
+      return;
+    }
+
+    var yMax = trendNiceMax(Math.max(maxVal, avg));
+    function yAt(v){ return baseY - (v / yMax) * plotH; }
+
+    trendChartGeom = { mode: 'lines', axis: axis, series: series, hues: hues, totals: totals, n: n, drawn: drawn, padL: padL, padR: padR, stepX: stepX, plotW: plotW, xAt: xAt, yAt: yAt, padT: padT, baseY: baseY, cssW: cssW, cssH: cssH, yMax: yMax, selIdx: selIdx };
+
+    function tracePath(sr, progress){
+      ctx.beginPath();
+      for(var i = 0; i < drawn; i++){
+        var y = baseY - (sr.values[i] / yMax) * plotH * progress;
+        if(i === 0) ctx.moveTo(xAt(i), y); else ctx.lineTo(xAt(i), y);
+      }
+      if(drawn === 1){ ctx.arc(xAt(0), baseY - (sr.values[0] / yMax) * plotH * progress, 3, 0, Math.PI * 2); }
+    }
+
+    // hoverIdx: bucket under the cursor (or null); litIdx: series under the
+    // cursor, lit in its own hue for as long as the pointer rests on it.
+    function draw(progress, hoverIdx, litIdx){
+      ctx.clearRect(0, 0, cssW, cssH);
+      var hasHover = hoverIdx !== null && hoverIdx !== undefined;
+      var lit = (litIdx !== null && litIdx !== undefined) ? litIdx : -1;
+
+      // Recessive grid: four horizontal rules with their values at the left.
+      ctx.strokeStyle = lineColor;
+      ctx.lineWidth = 1;
+      ctx.fillStyle = inkSoft;
+      ctx.font = '9px "Work Sans", sans-serif';
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      for(var g = 0; g <= 4; g++){
+        var v = (yMax / 4) * g;
+        var gy = Math.round(yAt(v)) + 0.5;
+        ctx.beginPath();
+        ctx.moveTo(padL, gy);
+        ctx.lineTo(cssW - padR, gy);
+        ctx.stroke();
+        ctx.fillText(fmtAxisMinutes(v), padL - 6, gy);
+      }
+
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'alphabetic';
+      axis.labels.forEach(function(lbl, i){ if(lbl) ctx.fillText(lbl, xAt(i), cssH - 6); });
+
+      if(hasHover){
+        ctx.strokeStyle = lineStrong;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(Math.round(xAt(hoverIdx)) + 0.5, padT);
+        ctx.lineTo(Math.round(xAt(hoverIdx)) + 0.5, baseY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      // Draw order: grey context first, coloured lines next, then whatever
+      // is selected or lit on top. With a selection everything else fades.
+      var order = [];
+      series.forEach(function(sr, si){ if(!sr.colored && si !== selIdx && si !== lit) order.push(si); });
+      series.forEach(function(sr, si){ if(sr.colored && si !== selIdx && si !== lit) order.push(si); });
+      if(lit >= 0 && lit !== selIdx) order.push(lit);
+      if(selIdx >= 0) order.push(selIdx);
+
+      order.forEach(function(si){
+        var sr = series[si];
+        var isTop = si === selIdx || si === lit;
+        if(isTop){
+          ctx.globalAlpha = 1;
+          ctx.strokeStyle = hues[si];
+          ctx.lineWidth = 2.5;
+        } else if(selIdx >= 0){
+          ctx.globalAlpha = sr.colored ? 0.18 : 0.12;
+          ctx.strokeStyle = sr.colored ? hues[si] : inkSoft;
+          ctx.lineWidth = sr.colored ? 2 : 1.25;
+        } else if(sr.colored){
+          ctx.globalAlpha = 1;
+          ctx.strokeStyle = hues[si];
+          ctx.lineWidth = 2;
+        } else {
+          ctx.globalAlpha = 0.35;
+          ctx.strokeStyle = inkSoft;
+          ctx.lineWidth = 1.25;
+        }
+        if(sr.dashed) ctx.setLineDash([9, 5]);
+        tracePath(sr, progress);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      });
+      ctx.globalAlpha = 1;
+
+      // Average: long dashes in neutral ink, with its value tagged at the
+      // right end where no series label competes for the space.
+      if(avg > 0){
+        var ay = Math.round(yAt(avg * progress)) + 0.5;
+        ctx.strokeStyle = ink;
+        ctx.globalAlpha = 0.7;
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([7, 5]);
+        ctx.beginPath();
+        ctx.moveTo(padL, ay);
+        ctx.lineTo(cssW - padR, ay);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+        var tag = 'avg ' + formatDuration(Math.round(avg));
+        ctx.font = '600 9px "Work Sans", sans-serif';
+        var tw = trendTextWidth(ctx, tag) + 8;
+        var tagX = cssW - padR - tw;
+        var tagY = ay - 7;
+        ctx.fillStyle = paperRaised;
+        ctx.fillRect(tagX, tagY - 6, tw, 12);
+        ctx.fillStyle = ink;
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(tag, cssW - padR - 4, tagY);
+        ctx.textBaseline = 'alphabetic';
+      }
+
+      // Hovered bucket: a ringed marker on each line that's currently
+      // readable (coloured ones, or just the selected/lit one).
+      if(hasHover){
+        series.forEach(function(sr, si){
+          var visible = selIdx >= 0 ? si === selIdx : (sr.colored || si === lit);
+          if(!visible && si !== lit) return;
+          var mx = xAt(hoverIdx), my = yAt(sr.values[hoverIdx]);
+          ctx.beginPath();
+          ctx.arc(mx, my, 4, 0, Math.PI * 2);
+          ctx.fillStyle = hues[si];
+          ctx.fill();
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = paperRaised;
+          ctx.stroke();
+        });
+        // A lit grey line gets its name beside the marker, since it has no
+        // legend chip of its own on show.
+        if(lit >= 0 && !series[lit].colored && lit !== selIdx){
+          var lx = xAt(hoverIdx), ly = yAt(series[lit].values[hoverIdx]);
+          ctx.font = '600 10px "Work Sans", sans-serif';
+          var name = series[lit].name;
+          var nw = trendTextWidth(ctx, name) + 10;
+          var leftSide = lx + 10 + nw > cssW - padR;
+          var bx = leftSide ? lx - 10 - nw : lx + 10;
+          ctx.fillStyle = paperRaised;
+          ctx.fillRect(bx, ly - 16, nw, 16);
+          ctx.fillStyle = ink;
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(name, bx + 5, ly - 8);
+          ctx.textBaseline = 'alphabetic';
+        }
+      }
+    }
+    trendChartGeom.draw = draw;
+
+    animateProgress(450, function(p){
+      if(myToken !== trendAnimToken) return;
+      draw(p, null, null);
+    });
+
+    // Summary line: where the peak landed and who led the period. With a
+    // selection, it talks about that category alone.
+    var peakIdx = 0;
+    if(selIdx >= 0){
+      var vals = series[selIdx].values;
+      for(var i = 1; i < n; i++){ if(vals[i] > vals[peakIdx]) peakIdx = i; }
+      var selShare = grand > 0 ? Math.round((series[selIdx].total / grand) * 100) : 0;
+      els.trendNote.textContent = series[selIdx].name + ': ' + formatDuration(series[selIdx].total) + ' in this period (' + selShare +
+        '% of focus time), peaking ' + axis.titles[peakIdx] + ' with ' + formatDuration(vals[peakIdx]) + '. Click it again to show every category.';
+    } else {
+      for(var j = 1; j < n; j++){ if(totals[j] > totals[peakIdx]) peakIdx = j; }
+      var lead = series[0];
+      var share = grand > 0 ? Math.round((lead.total / grand) * 100) : 0;
+      var greyCount = series.length - Math.min(series.length, TREND_COLORED);
+      els.trendNote.textContent = 'Peak: ' + axis.titles[peakIdx] + ' with ' + formatDuration(totals[peakIdx]) +
+        '. ' + lead.name + ' leads this period at ' + share + '% of focus time.' +
+        (greyCount > 0 ? ' The top ' + TREND_COLORED + ' categories are in colour; hover a grey line to see which it is, or click any to focus on it.' : ' Click a category to focus on it.');
+    }
+  }
+
+  // jsdom's canvas stub has no measureText; fall back to a rough width.
+  function trendTextWidth(ctx, text){
+    var measured = typeof ctx.measureText === 'function' ? ctx.measureText(text) : null;
+    return (measured && measured.width) || text.length * 5;
+  }
+
+  // Legend: a chip per coloured category (plus the selected one, if it's a
+  // grey line), then a "+N more" toggle that unfolds the grey ones so any
+  // of them can be picked, and the average with its own dashed swatch.
+  function renderTrendLegend(series, hues, selIdx, avg, avgLabel, unit){
+    var legend = els.trendLegend;
+    legend.innerHTML = '';
+    var main = [], more = [];
+    series.forEach(function(sr, i){
+      if(sr.colored === false && i !== selIdx) more.push(i); else main.push(i);
+    });
+
+    function chip(i){
+      var sr = series[i];
+      var item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'hour-legend-item trend-legend-item' + (selIdx >= 0 && i !== selIdx ? ' is-dim' : '') + (i === selIdx ? ' is-selected' : '');
+      item.setAttribute('aria-pressed', String(i === selIdx));
+      item.dataset.category = sr.name;
+      item.title = i === selIdx ? 'Show every category' : 'Focus on ' + sr.name;
+      var sw = document.createElement('span');
+      sw.className = 'trend-swatch' + (sr.colored === false && i !== selIdx ? ' trend-swatch-grey' : (sr.dashed ? ' trend-swatch-dashed' : ''));
+      sw.style.background = (sr.colored === false && i !== selIdx) ? '' : hues[i];
+      item.appendChild(sw);
+      item.appendChild(document.createTextNode(sr.name));
+      return item;
+    }
+
+    main.forEach(function(i){ legend.appendChild(chip(i)); });
+
+    if(more.length > 0){
+      var toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'hour-legend-item trend-legend-item trend-legend-more';
+      toggle.setAttribute('aria-expanded', String(trendMoreOpen));
+      toggle.textContent = trendMoreOpen ? 'Show fewer' : '+' + more.length + ' more';
+      toggle.title = trendMoreOpen ? 'Hide the smaller categories' : 'List the ' + more.length + ' smaller categories (drawn in grey)';
+      legend.appendChild(toggle);
+    }
+
+    if(series.length > 0 && avg > 0){
+      var avgItem = document.createElement('span');
+      avgItem.className = 'hour-legend-item trend-legend-item trend-legend-avg';
+      var avgSw = document.createElement('span');
+      avgSw.className = 'trend-swatch trend-swatch-avg';
+      avgItem.appendChild(avgSw);
+      avgItem.appendChild(document.createTextNode(avgLabel + ' · ' + formatDuration(Math.round(avg)) + ' ' + unit));
+      legend.appendChild(avgItem);
+    }
+
+    if(more.length > 0 && trendMoreOpen){
+      var list = document.createElement('div');
+      list.className = 'trend-legend-list';
+      more.forEach(function(i){ list.appendChild(chip(i)); });
+      legend.appendChild(list);
+    }
+  }
+
+  function setTrendSelection(name){
+    trendSelected = (trendSelected === name) ? null : name;
+    renderInsights(loadSessions());
+  }
+
+  function hideTrendChartTooltip(){
+    if(els.trendChartTooltip) els.trendChartTooltip.hidden = true;
+    if(trendChartGeom && trendChartGeom.draw) trendChartGeom.draw(1, null, null);
+  }
+
+  function trendBucketAt(g, x){
+    var idx = g.n > 1 ? Math.round((x - g.padL) / g.stepX) : 0;
+    return Math.max(0, Math.min(g.n - 1, idx));
+  }
+
+  // The series whose point at bucket idx is nearest the cursor, if any is
+  // within reach. Coloured, selected and grey lines all count.
+  function trendSeriesNear(g, idx, y, reach){
+    var best = -1, bestDist = reach;
+    g.series.forEach(function(sr, si){
+      var d = Math.abs(g.yAt(sr.values[idx]) - y);
+      if(d < bestDist){ bestDist = d; best = si; }
+    });
+    return best;
+  }
+
+  // Hovering anywhere on the plot snaps to the nearest bucket and lists the
+  // readable categories' minutes there — the lines alone only show shape.
+  // Resting on a grey line lights it up and names it.
+  function handleTrendChartHover(evt){
+    if(!trendChartGeom){ hideTrendChartTooltip(); return; }
+    var g = trendChartGeom;
+    if(g.mode === 'timeline'){ handleTimelineHover(evt, g); return; }
+    var x = evt.offsetX;
+    if(x < g.padL - 8 || x > g.cssW){ hideTrendChartTooltip(); return; }
+    var idx = trendBucketAt(g, x);
+    if(idx >= g.drawn){ hideTrendChartTooltip(); return; }
+    var lit = trendSeriesNear(g, idx, evt.offsetY, 14);
+
+    // Rows: the selected/lit one first, then the coloured ones, then a
+    // single line for everything grey so the bubble stays short.
+    var rows = [];
+    var greyTotal = 0, greyCount = 0;
+    var lead = g.selIdx >= 0 ? g.selIdx : lit;
+    g.series.forEach(function(sr, si){
+      if(si === lead) return;
+      if(sr.colored) rows.push(si);
+      else { greyTotal += sr.values[idx]; greyCount++; }
+    });
+    if(lead >= 0) rows.unshift(lead);
+    var html = rows.map(function(si){
+      var sr = g.series[si];
+      var dim = g.selIdx >= 0 && si !== g.selIdx;
+      return '<span class="tt-row' + (dim ? ' tt-dim' : '') + '"><span class="tt-dot" style="background:' + g.hues[si] + '"></span>' +
+        escapeHtml(sr.name) + ' · ' + formatDuration(sr.values[idx]) + '</span>';
+    });
+    if(greyCount > 0){
+      html.push('<span class="tt-row tt-dim"><span class="tt-dot tt-dot-grey"></span>' + greyCount + ' other ' + (greyCount === 1 ? 'category' : 'categories') + ' · ' + formatDuration(greyTotal) + '</span>');
+    }
+    var tip = els.trendChartTooltip;
+    tip.innerHTML = '<strong>' + escapeHtml(g.axis.titles[idx]) + '</strong>' +
+      (g.totals[idx] > 0 ? ' <span class="tt-total">' + formatDuration(g.totals[idx]) + '</span>' : '') +
+      '<br>' + html.join('<br>');
+    // Keep the bubble inside the canvas near either edge.
+    var left = g.xAt(idx);
+    var half = Math.min(110, g.cssW / 2);
+    left = Math.max(half, Math.min(g.cssW - half, left));
+    tip.style.left = left + 'px';
+    tip.hidden = false;
+    g.draw(1, idx, lit >= 0 ? lit : null);
+  }
+
+  // Clicking near a line selects that category; clicking empty plot clears.
+  function handleTrendChartClick(evt){
+    if(!trendChartGeom) return;
+    var g = trendChartGeom;
+    if(g.mode === 'timeline'){ handleTimelineClick(evt, g); return; }
+    var idx = trendBucketAt(g, evt.offsetX);
+    var best = idx < g.drawn ? trendSeriesNear(g, idx, evt.offsetY, 12) : -1;
+    if(best >= 0) setTrendSelection(g.series[best].name);
+    else if(trendSelected !== null) setTrendSelection(trendSelected);
+  }
+
+  var trendChartHoverWired = false;
+  function wireTrendChartHover(){
+    if(trendChartHoverWired || !els.categoryTrendChart) return;
+    trendChartHoverWired = true;
+    els.categoryTrendChart.addEventListener('mousemove', handleTrendChartHover);
+    els.categoryTrendChart.addEventListener('mouseleave', hideTrendChartTooltip);
+    els.categoryTrendChart.addEventListener('click', handleTrendChartClick);
+    els.trendLegend.addEventListener('click', function(e){
+      var more = e.target.closest('.trend-legend-more');
+      if(more){
+        trendMoreOpen = !trendMoreOpen;
+        renderInsights(loadSessions());
+        return;
+      }
+      var btn = e.target.closest('.trend-legend-item[data-category]');
+      if(!btn) return;
+      setTrendSelection(btn.dataset.category);
+    });
+  }
+
+  // Monday-start week containing `d`, as ['YYYY-MM-DD' from, 'YYYY-MM-DD' to].
+  // Monday-first matches the calendar pickers elsewhere in the app.
+  function weekBounds(d){
+    d = d || new Date();
+    var start = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+    var end = new Date(start);
+    end.setDate(end.getDate() + 6);
+    return [todayKey(start), todayKey(end)];
+  }
+
+  // Filters sessions down to the period the Insights tabs ask for. 'day' =
+  // today, 'week' = this Monday–Sunday week, 'month' = this calendar month,
+  // 'year' = this calendar year, 'all' = everything ever logged.
   function sessionsInRange(sessions, range){
     if(range === 'day'){
       var todayD = todayKey();
       return sessions.filter(function(s){ return s.date === todayD; });
+    }
+    if(range === 'week'){
+      var wk = weekBounds();
+      return sessions.filter(function(s){ return s.date >= wk[0] && s.date <= wk[1]; });
     }
     if(range === 'month'){
       var ym = todayKey().slice(0, 7);
@@ -7402,14 +8293,17 @@
     return sessions;
   }
 
-  // Both charts read the same range-filtered slice, so "By category" and
-  // "By hour of day" always agree on what period they're describing.
+  // All three charts read the same range-filtered slice, so "By category",
+  // "By hour of day" and the category trend always agree on what period
+  // they're describing.
   function renderInsights(sessions){
     var filtered = sessionsInRange(sessions, categoryRange);
     // Category breakdown is about focus work only; the hour-of-day chart
     // wants both focus and break minutes to show the split.
-    renderCategoryPie(filtered.filter(function(s){ return s.type !== 'break'; }));
+    var focusOnly = filtered.filter(function(s){ return s.type !== 'break'; });
+    renderCategoryPie(focusOnly);
     renderHourChart(filtered);
+    renderCategoryTrend(focusOnly, sessions);
   }
 
   // Donut chart of focus minutes by category for the selected range, so it's
@@ -8125,6 +9019,7 @@
   renderTimer();
   refreshStats();
   wireHourChartHover();
+  wireTrendChartHover();
   wireGarden();
 
   // ---------- external integration hook (used by js/sync.js) ----------

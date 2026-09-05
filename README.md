@@ -290,11 +290,11 @@ ngay trong danh sách preset, và tô màu cho chip session trên từng task ca
 Nhìn màu là nhận ra ngay task đó đang dùng preset nào, tách biệt với màu
 category (chip category dùng bảng màu khác, dạng pill tròn).
 
-## Card "Insights" — By category + By hour of day, cùng chung 1 khoảng thời gian
+## Card "Insights" — By category + By hour of day + Focus by category over time, cùng chung 1 khoảng thời gian
 
 Bỏ chart "Last 7 days" (không có thang đo, nhãn ngày lặp, và trùng ý với
-heatmap) — thay bằng card **"Insights"** full-width, gộp 2 biểu đồ dùng
-**chung 4 tab Day / Month / Year / All time**, để không còn tình trạng mỗi
+heatmap) — thay bằng card **"Insights"** full-width, gộp 3 biểu đồ dùng
+**chung 1 bộ tab thời gian**, để không còn tình trạng mỗi
 widget trong trang nói một khoảng thời gian khác nhau:
 
 - **By category**: biểu đồ tròn (donut) + danh sách — mỗi lát cắt là 1
@@ -305,8 +305,44 @@ widget trong trang nói một khoảng thời gian khác nhau:
   tập trung nhiều, cột peak được tô đậm nhất; dưới chart có câu tóm tắt
   "Peak focus hours: HH:00–HH:00".
 
-Bấm 1 tab, cả 2 biểu đồ đổi theo cùng lúc. App nhớ tab đã chọn lần cuối (lưu
-ở `localStorage`).
+- **Focus by category over time** (biểu đồ đường, nằm dưới 2 biểu đồ trên,
+  full-width): mỗi đường là 1 category, màu khớp chip category; trục Y là
+  phút focus (không tính break), trục X là các mốc thời gian đều nhau đổi
+  theo tab — Week: theo ngày (Mon–Sun), Month: theo ngày trong tháng, Year:
+  theo tháng, All time: theo tháng từ tháng có session đầu tiên, Custom: theo
+  ngày (≤31 ngày), theo tuần (≤~6 tháng) hoặc theo tháng. Mốc không có
+  session vẽ chạm 0 (không đứt đoạn) để thấy ngày nghỉ; mốc chưa tới (ngày
+  còn lại của tháng) không vẽ. Hover hiện tooltip liệt kê phút của từng
+  category tại mốc đó.
+  - **Nhiều category** (xử lý kiểu "focus + context"): mọi category đều có
+    đường, nhưng chỉ **5 category nhiều phút nhất được tô màu**; phần còn
+    lại vẽ mảnh, xám nhạt để vẫn thấy hình dạng chung và số lượng mà không
+    rối. Rê chuột lên một đường xám thì đường đó lên màu và hiện tên; click
+    để giữ. Legend liệt kê 5 chip màu + nút **"+N more"** mở danh sách các
+    category xám để chọn. Tooltip gộp các đường xám thành một dòng "N other
+    categories · Xm". Không gộp thành "Other" trên biểu đồ. Màu vẫn theo
+    hash tên category (khớp chip ở mọi nơi), nên 2 trong 5 đường màu vẫn có
+    thể trùng hue — đường nhỏ hơn trong cặp đó vẽ nét đứt dài, swatch
+    trong legend cũng đứt tương ứng.
+  - **Tab Day đổi sang timeline** thay cho biểu đồ đường: một ngày chia theo
+    giờ chỉ ra toàn gai nhọn 0 → 25m → 0 và trùng ý với "By hour of day", nên
+    panel này chuyển thành mỗi category một hàng, trục ngang 00–24h, mỗi
+    session là một khối đặt đúng giờ bắt đầu và dài đúng số phút (giờ kết
+    thúc = `timestamp`, giờ bắt đầu = trừ đi `minutes`). Hover khối hiện
+    category, khung giờ và tên task; vạch đứt màu accent đánh dấu "bây giờ".
+    Không có đường trung bình ở tab này.
+  - **Đường trung bình**: nét đứt dài, màu ink (không trùng màu category
+    nào), là trung bình tổng phút mỗi mốc tính trên các mốc *đã bắt đầu*
+    (ngày/tháng tương lai trong khoảng không kéo tụt trung bình). Giá trị ghi
+    ở đầu bên phải ("avg 1.5h") và trong legend.
+  - **Chọn 1 category**: bấm chip trong legend hoặc bấm thẳng vào đường —
+    đường đó vẽ đậm lên trên, các đường khác mờ đi, đường trung bình và câu
+    tóm tắt bên dưới chuyển sang nói về riêng category đó. Bấm lại (hoặc bấm
+    vùng trống trên biểu đồ) để bỏ chọn.
+
+Bấm 1 tab, cả 3 biểu đồ đổi theo cùng lúc. Bộ tab gồm **Day / Week / Month /
+Year / All time / Custom** (Week = tuần Thứ Hai → Chủ Nhật hiện tại). App nhớ
+tab đã chọn lần cuối (lưu ở `localStorage`).
 
 Layout tab Statistics: "Today's log" full-width; "Insights" và "Pomodoro
 heatmap" cũng full-width, xếp theo cột đơn giản (không còn ghép 2 card/hàng
