@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { mountApp, addTaskViaForm, setValue } from './helpers/mountApp.js';
-import { tasks } from './helpers/storage.js';
+import { tasks, KEYS } from './helpers/storage.js';
 
 describe('task list', () => {
   it('adds a task through the form and clears the inputs afterwards', async () => {
@@ -81,5 +81,46 @@ describe('task list', () => {
     els.taskList.querySelector('[data-action="toggle-done"]').click();
     expect(els.startPauseBtn.disabled).toBe(true);
     expect(els.categoryLabel.textContent).toBe('No task selected');
+  });
+  it('sets aside an unreadable tasks store instead of letting the next save overwrite it', async () => {
+    const corrupt = '{"this is not": json';
+    localStorage.setItem(KEYS.tasks, corrupt);
+    const els = await mountApp();
+    addTaskViaForm(els, 'Fresh start', 'Work', 1);
+
+    // The new task went in, and the broken original is still recoverable.
+    expect(tasks().map((t) => t.name)).toEqual(['Fresh start']);
+    expect(localStorage.getItem(KEYS.tasks + '.corrupt')).toBe(corrupt);
+  });
+
+  it('keeps the first stashed copy when the store is found corrupt again later', async () => {
+    localStorage.setItem(KEYS.tasks, 'first bad');
+    await mountApp();
+    localStorage.setItem(KEYS.tasks, 'second bad');
+    const els = await mountApp();
+    addTaskViaForm(els, 'X', 'Work', 1);
+    expect(localStorage.getItem(KEYS.tasks + '.corrupt')).toBe('first bad');
+  });
+
+  it('drops junk entries from the tasks store without discarding the real ones', async () => {
+    localStorage.setItem(KEYS.tasks, JSON.stringify([
+      null,
+      'not a task',
+      { id: 'keep-me', name: 'Survivor', category: 'Work', estimate: 2, completed: 1, done: false, createdAt: 1 }
+    ]));
+    const els = await mountApp();
+    addTaskViaForm(els, 'New one', 'Work', 1);
+
+    const names = tasks().map((t) => t.name);
+    expect(names).toEqual(['Survivor', 'New one']);
+    expect(localStorage.getItem(KEYS.tasks + '.corrupt')).toBeNull();
+  });
+
+  it('treats a tasks store that is not an array as corrupt', async () => {
+    localStorage.setItem(KEYS.tasks, '{"id":"x","name":"lonely object"}');
+    const els = await mountApp();
+    addTaskViaForm(els, 'New one', 'Work', 1);
+    expect(tasks()).toHaveLength(1);
+    expect(localStorage.getItem(KEYS.tasks + '.corrupt')).toBe('{"id":"x","name":"lonely object"}');
   });
 });

@@ -920,36 +920,64 @@
   }
 
   // ---------- tasks ----------
-  function loadTasks(){
+  // Where the unreadable contents of the tasks key are parked, so the next
+  // saveTasks does not write a fresh list straight over the only copy of what
+  // the user had. Written once and then left alone: whoever finds it can
+  // recover by hand, and a second corruption never overwrites the first.
+  var STORAGE_TASKS_CORRUPT = STORAGE_TASKS + '.corrupt';
+
+  function stashCorruptTasks(raw){
+    if(!raw) return;
     try{
-      var raw = localStorage.getItem(STORAGE_TASKS);
-      var arr = raw ? JSON.parse(raw) : [];
-      if(!Array.isArray(arr)) arr = [];
-      var migrated = false;
-      arr.forEach(function(t){
-        if(!t.id){ t.id = generateId(); migrated = true; }
-        if(typeof t.completed !== 'number'){ t.completed = 0; migrated = true; }
-        if(typeof t.estimate !== 'number' || t.estimate < 1){ t.estimate = 1; migrated = true; }
-        if(typeof t.done !== 'boolean'){ t.done = false; migrated = true; }
-        if(!t.category){ t.category = 'Uncategorized'; migrated = true; }
-        if(!t.sessionPresetId){ t.sessionPresetId = 'deep'; migrated = true; }
-        if(typeof t.workMin !== 'number'){ t.workMin = 50; migrated = true; }
-        if(typeof t.breakMin !== 'number'){ t.breakMin = 10; migrated = true; }
-        if(!Array.isArray(t.notes)){ t.notes = []; migrated = true; }
-        // Tasks finished before this field existed have no way to know when
-        // that happened — treat them as done "in the past" so they hide
-        // immediately rather than lingering on the list forever.
-        if(t.done && typeof t.doneAt !== 'number'){ t.doneAt = 0; migrated = true; }
-        if(!t.done && t.doneAt){ t.doneAt = null; migrated = true; }
-        // Last-modified stamp used by applyIncomingBackup to decide, per
-        // task, which side of a sync pull is newer. Tasks written before
-        // this field existed get their creation time as a floor — never 0,
-        // or a stale remote copy with no stamp of its own would look newer.
-        if(typeof t.updatedAt !== 'number'){ t.updatedAt = t.createdAt || 0; migrated = true; }
-      });
-      if(migrated) saveTasks(arr);
-      return arr;
-    }catch(e){ return []; }
+      if(localStorage.getItem(STORAGE_TASKS_CORRUPT) == null){
+        localStorage.setItem(STORAGE_TASKS_CORRUPT, raw);
+      }
+    }catch(e){ /* storage unavailable — nothing more we can do */ }
+  }
+
+  // Every task operation is load → mutate → save, so whatever this returns is
+  // what the next save writes back. Returning [] for a store that merely
+  // failed to parse used to mean the following add/edit/delete replaced the
+  // user's whole task list with that one change. Now an unreadable store is
+  // set aside first, and a list that parses but has junk entries in it is
+  // cleaned per entry rather than thrown away wholesale.
+  function loadTasks(){
+    var raw = null;
+    try{ raw = localStorage.getItem(STORAGE_TASKS); }
+    catch(e){ return []; }
+    if(!raw) return [];
+
+    var arr;
+    try{ arr = JSON.parse(raw); }
+    catch(e){ stashCorruptTasks(raw); return []; }
+    if(!Array.isArray(arr)){ stashCorruptTasks(raw); return []; }
+
+    var migrated = false;
+    var cleaned = arr.filter(function(t){ return !!t && typeof t === 'object'; });
+    if(cleaned.length !== arr.length){ arr = cleaned; migrated = true; }
+    arr.forEach(function(t){
+      if(!t.id){ t.id = generateId(); migrated = true; }
+      if(typeof t.completed !== 'number'){ t.completed = 0; migrated = true; }
+      if(typeof t.estimate !== 'number' || t.estimate < 1){ t.estimate = 1; migrated = true; }
+      if(typeof t.done !== 'boolean'){ t.done = false; migrated = true; }
+      if(!t.category){ t.category = 'Uncategorized'; migrated = true; }
+      if(!t.sessionPresetId){ t.sessionPresetId = 'deep'; migrated = true; }
+      if(typeof t.workMin !== 'number'){ t.workMin = 50; migrated = true; }
+      if(typeof t.breakMin !== 'number'){ t.breakMin = 10; migrated = true; }
+      if(!Array.isArray(t.notes)){ t.notes = []; migrated = true; }
+      // Tasks finished before this field existed have no way to know when
+      // that happened — treat them as done "in the past" so they hide
+      // immediately rather than lingering on the list forever.
+      if(t.done && typeof t.doneAt !== 'number'){ t.doneAt = 0; migrated = true; }
+      if(!t.done && t.doneAt){ t.doneAt = null; migrated = true; }
+      // Last-modified stamp used by applyIncomingBackup to decide, per
+      // task, which side of a sync pull is newer. Tasks written before
+      // this field existed get their creation time as a floor — never 0,
+      // or a stale remote copy with no stamp of its own would look newer.
+      if(typeof t.updatedAt !== 'number'){ t.updatedAt = t.createdAt || 0; migrated = true; }
+    });
+    if(migrated) saveTasks(arr);
+    return arr;
   }
 
   function saveTasks(arr){
@@ -1007,6 +1035,31 @@
     state.activeTaskName = '';
     state.activeTaskCategory = '';
     saveTimerState();
+  }
+
+  // The active task's name and category are copied into timer state so the
+  // header and logSession can use them without a lookup. Local edits keep
+  // those copies current, but a sync pull rewrites tasks behind the timer's
+  // back — so after a merge, re-read the active task and bring the copies
+  // back in line, or sessions get logged under a name the task no longer
+  // has. A task finished on another device also stops being active here,
+  // the same as ticking it off locally would — except while a session is
+  // running on it, which finishes under the task it started with.
+  function reconcileActiveTask(tasks){
+    if(!state.activeTaskId) return;
+    var t = tasks.filter(function(x){ return x.id === state.activeTaskId; })[0];
+    if(!t) return;
+    if(t.done && !state.running){
+      clearActiveTask();
+      renderTimer();
+      return;
+    }
+    if(t.name !== state.activeTaskName || t.category !== state.activeTaskCategory){
+      state.activeTaskName = t.name;
+      state.activeTaskCategory = t.category;
+      saveTimerState();
+      renderTimer();
+    }
   }
 
   function toggleTaskDone(id){
@@ -7414,6 +7467,7 @@
       addedTasks += 1;
     });
     saveTasks(currentTasks);
+    reconcileActiveTask(currentTasks);
 
     var incomingCategories = (data && Array.isArray(data.categories)) ? data.categories : [];
     var currentCategories = loadCategories();

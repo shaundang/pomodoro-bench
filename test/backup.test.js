@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { mountApp, addTaskViaForm } from './helpers/mountApp.js';
-import { tasks, sessions, categories, garden, KEYS } from './helpers/storage.js';
+import { tasks, sessions, categories, garden, timerState, KEYS } from './helpers/storage.js';
 
 describe('backup export/import (window.PomodoroBench)', () => {
   it('buildBackupData snapshots sessions, tasks, categories and custom presets', async () => {
@@ -225,5 +225,72 @@ describe('backup export/import (window.PomodoroBench)', () => {
       window.PomodoroBench.applyIncomingBackup({ sessions: [{ id: 'r1', date: '2024-01-01', category: 'Work', task: 'R', minutes: 25, timestamp: 1, status: 'completed', type: 'focus' }], tasks: [] });
       expect(garden()).toEqual(before);
     });
+  });
+  it('a remote rename of the active task updates the timer header and timer state', async () => {
+    const els = await mountApp();
+    addTaskViaForm(els, 'Old name', 'Work', 1);
+    els.taskList.querySelector('[data-action="activate"]').click();
+    const id = tasks()[0].id;
+    expect(els.categoryLabel.textContent).toBe('Old name — Work');
+
+    window.PomodoroBench.applyIncomingBackup({
+      sessions: [],
+      tasks: [{ id, name: 'New name', category: 'Learning', updatedAt: Date.now() + 60_000 }]
+    });
+
+    expect(els.categoryLabel.textContent).toBe('New name — Learning');
+    expect(timerState()).toMatchObject({ activeTaskId: id, activeTaskName: 'New name', activeTaskCategory: 'Learning' });
+  });
+
+  it('a remote done on the active task clears it, like ticking it off locally', async () => {
+    const els = await mountApp();
+    addTaskViaForm(els, 'Finish elsewhere', 'Work', 1);
+    els.taskList.querySelector('[data-action="activate"]').click();
+    const id = tasks()[0].id;
+    expect(els.startPauseBtn.disabled).toBe(false);
+
+    window.PomodoroBench.applyIncomingBackup({
+      sessions: [],
+      tasks: [{ id, name: 'Finish elsewhere', category: 'Work', done: true, doneAt: Date.now(), updatedAt: Date.now() + 60_000 }]
+    });
+
+    expect(tasks()[0].done).toBe(true);
+    expect(timerState().activeTaskId).toBeNull();
+    expect(els.startPauseBtn.disabled).toBe(true);
+    expect(els.categoryLabel.textContent).toBe('No task selected');
+  });
+
+  it('a remote done on the active task leaves a running session on it alone', async () => {
+    const els = await mountApp();
+    addTaskViaForm(els, 'Mid-session', 'Work', 1);
+    els.taskList.querySelector('[data-action="activate"]').click();
+    const id = tasks()[0].id;
+    els.startPauseBtn.click();
+    // First start of the day goes through the intention prompt.
+    Array.from(els.intentActions.querySelectorAll('button')).find((b) => b.textContent.trim() === 'Skip').click();
+    expect(timerState().running).toBe(true);
+
+    window.PomodoroBench.applyIncomingBackup({
+      sessions: [],
+      tasks: [{ id, name: 'Mid-session', category: 'Work', done: true, doneAt: Date.now(), updatedAt: Date.now() + 60_000 }]
+    });
+
+    expect(tasks()[0].done).toBe(true);
+    expect(timerState().activeTaskId).toBe(id);
+    els.startPauseBtn.click(); // pause, so no interval outlives the test
+  });
+
+  it('a merge that does not touch the active task leaves timer state untouched', async () => {
+    const els = await mountApp();
+    addTaskViaForm(els, 'Stay put', 'Work', 1);
+    els.taskList.querySelector('[data-action="activate"]').click();
+    const before = timerState();
+
+    window.PomodoroBench.applyIncomingBackup({
+      sessions: [],
+      tasks: [{ id: 'other', name: 'Unrelated', category: 'Work' }]
+    });
+
+    expect(timerState()).toEqual(before);
   });
 });
