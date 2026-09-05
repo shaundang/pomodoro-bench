@@ -58,6 +58,49 @@ describe('backup export/import (window.PomodoroBench)', () => {
     expect(() => window.PomodoroBench.applyIncomingBackup({ sessions: [], tasks: [] })).toThrow('invalid backup format');
   });
 
+  describe('a task shared by two devices', () => {
+    // Reproduces the reported bug: mark a task done on device A, pull that
+    // same task (same id, already present locally) on device B — it must
+    // show up done there too, not linger forever as unfinished.
+    it('applies a done/completed update from a newer remote copy of the same task id', async () => {
+      await mountApp();
+      // Seed the local task the way device B would already have it: done:false.
+      localStorage.setItem('pomodoroBench.tasks.v1', JSON.stringify([
+        { id: 't1', name: 'Write report', category: 'Work', estimate: 1, completed: 0, done: false, doneAt: null, createdAt: 1, updatedAt: 1, sessionPresetId: 'deep', workMin: 50, breakMin: 10, notes: [] }
+      ]));
+
+      // Device A marked it done later and pushed a newer updatedAt.
+      const result = window.PomodoroBench.applyIncomingBackup({
+        sessions: [],
+        tasks: [{ id: 't1', name: 'Write report', category: 'Work', estimate: 1, completed: 0, done: true, doneAt: 500, updatedAt: 500 }]
+      });
+
+      const t = tasks().find((x) => x.id === 't1');
+      expect(t.done).toBe(true);
+      expect(t.doneAt).toBe(500);
+      expect(result.updatedTasks).toBe(1);
+      expect(result.addedTasks).toBe(0);
+    });
+
+    it('ignores a remote copy that is not newer than the local one', async () => {
+      await mountApp();
+      localStorage.setItem('pomodoroBench.tasks.v1', JSON.stringify([
+        { id: 't1', name: 'Write report', category: 'Work', estimate: 1, completed: 3, done: true, doneAt: 900, createdAt: 1, updatedAt: 900, sessionPresetId: 'deep', workMin: 50, breakMin: 10, notes: [] }
+      ]));
+
+      // A stale snapshot from before the local edit (older/equal updatedAt).
+      const result = window.PomodoroBench.applyIncomingBackup({
+        sessions: [],
+        tasks: [{ id: 't1', name: 'Write report', category: 'Work', estimate: 1, completed: 0, done: false, doneAt: null, updatedAt: 100 }]
+      });
+
+      const t = tasks().find((x) => x.id === 't1');
+      expect(t.done).toBe(true);
+      expect(t.completed).toBe(3);
+      expect(result.updatedTasks).toBe(0);
+    });
+  });
+
   // A farm is the one thing in here you cannot get back by working again: the
   // land was paid for and the animals were raised over weeks.
   describe('the garden', () => {

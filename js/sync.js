@@ -12,6 +12,13 @@
 // sends the full local snapshot. This means a delete on one device can be
 // "revived" by an older snapshot from another device that hasn't synced
 // that delete yet — acceptable for this app's scale, called out in the UI.
+//
+// Tasks are the one exception: an id that exists on both sides is not just
+// skipped anymore. Each task carries an `updatedAt` stamp, and whichever
+// copy is newer overwrites the other's fields (done, name, category,
+// completed, notes, ...) — see applyIncomingBackup in js/app.js. Otherwise
+// marking a task done on one device would never show up on another that
+// already had that task synced.
 
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
 import {
@@ -62,7 +69,11 @@ function fingerprint(data){
   return JSON.stringify([data.sessions.length, data.tasks.length, data.categories.length,
     (data.presets || []).length,
     data.sessions.map(function(s){return s.id;}).join(','),
-    data.tasks.map(function(t){return t.id + ':' + t.done + ':' + t.completed;}).join(','),
+    // updatedAt covers every editable field (name, category, estimate,
+    // notes, session length...) in one stamp — without it, a rename or a
+    // note edit changes nothing here and never gets pushed, even though
+    // done/completed did trigger a push before this field existed.
+    data.tasks.map(function(t){return t.id + ':' + t.updatedAt;}).join(','),
     (data.presets || []).map(function(p){return p.id;}).join(',')]);
 }
 

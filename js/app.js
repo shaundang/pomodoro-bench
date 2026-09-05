@@ -323,7 +323,7 @@
     var tasks = loadTasks();
     var touched = false;
     tasks.forEach(function(t){
-      if(t.sessionPresetId === id){ t.sessionPresetId = 'custom'; touched = true; }
+      if(t.sessionPresetId === id){ t.sessionPresetId = 'custom'; t.updatedAt = nowMs(); touched = true; }
     });
     if(touched) saveTasks(tasks);
 
@@ -494,6 +494,7 @@
     t.sessionPresetId = state.presetId;
     t.workMin = state.workMin;
     t.breakMin = state.breakMin;
+    t.updatedAt = nowMs();
     saveTasks(tasks);
     renderTasks();
   }
@@ -922,6 +923,11 @@
         // immediately rather than lingering on the list forever.
         if(t.done && typeof t.doneAt !== 'number'){ t.doneAt = 0; migrated = true; }
         if(!t.done && t.doneAt){ t.doneAt = null; migrated = true; }
+        // Last-modified stamp used by applyIncomingBackup to decide, per
+        // task, which side of a sync pull is newer. Tasks written before
+        // this field existed get their creation time as a floor — never 0,
+        // or a stale remote copy with no stamp of its own would look newer.
+        if(typeof t.updatedAt !== 'number'){ t.updatedAt = t.createdAt || 0; migrated = true; }
       });
       if(migrated) saveTasks(arr);
       return arr;
@@ -947,6 +953,7 @@
       done: false,
       doneAt: null,
       createdAt: nowMs(),
+      updatedAt: nowMs(),
       sessionPresetId: state.presetId,
       workMin: state.workMin,
       breakMin: state.breakMin,
@@ -990,6 +997,7 @@
     if(!t) return;
     t.done = !t.done;
     t.doneAt = t.done ? nowMs() : null;
+    t.updatedAt = nowMs();
     saveTasks(tasks);
     if(t.done && state.activeTaskId === id){ clearActiveTask(); }
     renderTasks();
@@ -1016,6 +1024,7 @@
     var t = tasks.filter(function(x){ return x.id === id; })[0];
     if(!t) return;
     t.category = name;
+    t.updatedAt = nowMs();
     saveTasks(tasks);
     if(state.activeTaskId === id){
       state.activeTaskCategory = name;
@@ -1052,6 +1061,7 @@
 
     syncNotesDraftFromDom(cardEl);
     t.notes = (editingTaskNotesDraft || []).slice();
+    t.updatedAt = nowMs();
 
     saveTasks(tasks);
     if(state.activeTaskId === id){
@@ -1080,6 +1090,7 @@
     var t = tasks.filter(function(x){ return x.id === id; })[0];
     if(!t) return;
     t.completed += 1;
+    t.updatedAt = nowMs();
     saveTasks(tasks);
     renderTasks();
   }
@@ -1300,6 +1311,9 @@
       refreshStats();
     } else if(lastDeleted.type === 'task'){
       var tasks = loadTasks();
+      // Undoing a delete is itself a change worth syncing (the other device
+      // never saw the delete, but it also never saw this task come back).
+      lastDeleted.data.updatedAt = nowMs();
       tasks.push(lastDeleted.data);
       saveTasks(tasks);
       renderTasks();
@@ -7275,8 +7289,13 @@
   }
 
   // Merges an incoming backup object (from a file import or a remote sync
-  // pull) into local storage, additively by id — never deletes anything
-  // locally. Returns how much was newly added, or throws on an unrecognized
+  // pull) into local storage — never deletes anything locally. Sessions,
+  // categories and presets are additive by id only (an id already present
+  // locally is left untouched). Tasks are additive-by-id *plus*
+  // last-write-wins on a shared id: whichever side's `updatedAt` is newer
+  // overwrites the other's fields, so a done/rename/edit made on one device
+  // reaches another that already has that same task. Returns how much was
+  // newly added (and, for tasks, updated), or throws on an unrecognized
   // shape. Shared by the file-import handler and js/sync.js.
   function applyIncomingBackup(data){
     var incomingSessions = Array.isArray(data) ? data : (data && Array.isArray(data.sessions) ? data.sessions : []);
@@ -7312,14 +7331,39 @@
     saveSessions(currentSessions);
 
     var currentTasks = loadTasks();
-    var taskIds = {};
-    currentTasks.forEach(function(t){ taskIds[t.id] = true; });
-    var addedTasks = 0;
+    var taskById = {};
+    currentTasks.forEach(function(t){ taskById[t.id] = t; });
+    var addedTasks = 0, updatedTasks = 0;
     incomingTasks.forEach(function(t){
       if(!t || !t.name) return;
       var id = t.id || generateId();
-      if(taskIds[id]) return;
-      currentTasks.push({
+      // Older backups/remote docs predate this stamp — fall back to
+      // createdAt so an old snapshot never outranks a real edit made since.
+      var incomingUpdatedAt = typeof t.updatedAt === 'number' ? t.updatedAt : (t.createdAt || 0);
+      var existing = taskById[id];
+      if(existing){
+        // Ids are shared by both sides, so this is the same task edited on
+        // two devices — take whichever copy changed more recently instead
+        // of always keeping local (which used to mean a done/rename/etc.
+        // made elsewhere would never show up here). Ties keep the local
+        // copy: nothing to gain by overwriting with an identical stamp.
+        if(incomingUpdatedAt > (existing.updatedAt || 0)){
+          existing.name = t.name;
+          existing.category = t.category || 'Uncategorized';
+          existing.estimate = typeof t.estimate === 'number' ? t.estimate : existing.estimate;
+          existing.completed = typeof t.completed === 'number' ? t.completed : existing.completed;
+          existing.done = !!t.done;
+          existing.doneAt = typeof t.doneAt === 'number' ? t.doneAt : (t.done ? 0 : null);
+          existing.sessionPresetId = t.sessionPresetId || existing.sessionPresetId;
+          existing.workMin = typeof t.workMin === 'number' ? t.workMin : existing.workMin;
+          existing.breakMin = typeof t.breakMin === 'number' ? t.breakMin : existing.breakMin;
+          existing.notes = Array.isArray(t.notes) ? t.notes : existing.notes;
+          existing.updatedAt = incomingUpdatedAt;
+          updatedTasks += 1;
+        }
+        return;
+      }
+      var created = {
         id: id,
         name: t.name,
         category: t.category || 'Uncategorized',
@@ -7328,12 +7372,14 @@
         done: !!t.done,
         doneAt: typeof t.doneAt === 'number' ? t.doneAt : (t.done ? 0 : null),
         createdAt: t.createdAt || nowMs(),
+        updatedAt: incomingUpdatedAt || nowMs(),
         sessionPresetId: t.sessionPresetId || 'deep',
         workMin: typeof t.workMin === 'number' ? t.workMin : 50,
         breakMin: typeof t.breakMin === 'number' ? t.breakMin : 10,
         notes: Array.isArray(t.notes) ? t.notes : []
-      });
-      taskIds[id] = true;
+      };
+      currentTasks.push(created);
+      taskById[id] = created;
       addedTasks += 1;
     });
     saveTasks(currentTasks);
@@ -7383,7 +7429,7 @@
     // Also redraws the garden: renderGarden runs from refreshStats.
     refreshStats();
 
-    return {addedSessions: addedSessions, addedTasks: addedTasks, addedCategories: addedCategories};
+    return {addedSessions: addedSessions, addedTasks: addedTasks, updatedTasks: updatedTasks, addedCategories: addedCategories};
   }
 
   // Folds an incoming garden into the local one. Every rule here is chosen to
