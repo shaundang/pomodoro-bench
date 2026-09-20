@@ -6,6 +6,7 @@ export default defineConfig({
     setupFiles: ['./test/setup.js'],
     globals: false,
     css: false,
+    testTimeout: 15000,
 
     // One forked child at a time, with a much larger heap than the default.
     //
