@@ -1735,6 +1735,7 @@
 
   function saveSkillMarks(obj){
     try{ localStorage.setItem(STORAGE_SKILL_MARKS, JSON.stringify(obj)); }catch(e){ /* ignore */ }
+    notifyLocalChange('skillMarks');
   }
 
   // The lowest rung still ahead of you, never past the goal. Once every rung
@@ -8438,6 +8439,7 @@
       tasks: loadTasks(),
       categories: loadCategories(),
       presets: loadCustomPresets(),
+      skillMarks: loadSkillMarks(),
       // The farm, which used to be the one thing a backup left behind. It is
       // months of work made visible — land bought, animals raised from newborn,
       // a basket half full — and it lived in localStorage only, so switching
@@ -8468,7 +8470,17 @@
   function applyIncomingBackup(data){
     var incomingSessions = Array.isArray(data) ? data : (data && Array.isArray(data.sessions) ? data.sessions : []);
     var incomingTasks = (data && Array.isArray(data.tasks)) ? data.tasks : [];
-    if(incomingSessions.length === 0 && incomingTasks.length === 0) throw new Error('invalid backup format');
+    var incomingSkillMarks = (data && data.skillMarks && typeof data.skillMarks === 'object' && !Array.isArray(data.skillMarks)) ? data.skillMarks : null;
+    if(incomingSessions.length === 0 && incomingTasks.length === 0 && !incomingSkillMarks) throw new Error('invalid backup format');
+
+    if(incomingSkillMarks){
+      var currentSkillMarks = loadSkillMarks();
+      Object.keys(incomingSkillMarks).forEach(function(name){
+        var value = parseInt(incomingSkillMarks[name], 10);
+        if(value >= 1) currentSkillMarks[name] = Math.min(50000, value);
+      });
+      saveSkillMarks(currentSkillMarks);
+    }
 
     var currentSessions = loadSessions();
     var sessionIds = {};

@@ -1,0 +1,24 @@
+{
+  "data": {
+    "pomodoroBench.sessions.v1": "sessions",
+    "pomodoroBench.tasks.v1": "tasks",
+    "pomodoroBench.categories.v1": "categories",
+    "pomodoroBench.customPresets.v1": "presets",
+    "pomodoroBench.skillMarks.v1": "skillMarks",
+    "pomodoroBench.garden.v1": "garden"
+  },
+  "deviceLocal": [
+    "pomodoroBench.timer.v1",
+    "pomodoroBench.activeView.v1",
+    "pomodoroBench.categoryRange.v1",
+    "pomodoroBench.customRange.v1",
+    "pomodoroBench.logExpanded.v1"
+  ],
+  "cacheOrQueue": [
+    "pomodoroBench.tasks.v1.pending"
+  ],
+  "migrationCopies": [
+    "pomodoroBench.tasks.v1.corrupt",
+    "pomodoroBench.tasks.v1.preMigration.*"
+  ]
+}

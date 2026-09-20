@@ -6,7 +6,7 @@
 // elements in the backup menu.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mountApp, addTaskViaForm, setValue } from './helpers/mountApp.js';
-import { tasks, timerState, KEYS } from './helpers/storage.js';
+import { tasks, timerState, skillMarks, KEYS } from './helpers/storage.js';
 
 const FIRESTORE_URL = 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 const AUTH_URL = 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
@@ -376,6 +376,12 @@ describe('sync.js — signed in, one document per task', () => {
     expect(store.get(USER).tasks).toEqual([{ id: 'frozen', name: 'Old copy' }]);
     expect(store.get(USER).tasksMigratedAt).toBe('SERVER_TS');
 
+    // Skill goals are user data: the browser cache is only the local mirror.
+    localStorage.setItem(KEYS.skillMarks, JSON.stringify({ Work: 300 }));
+    window.dispatchEvent(new CustomEvent('pomodoroBench:changed', { detail: { what: 'skillMarks' } }));
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(store.get(USER).skillMarks).toEqual({ Work: 300 });
+
     // a session logged locally still travels through the user document
     els.taskList.querySelector('[data-action="activate"]').click();
     setValue(els.workInput, 1);
@@ -385,6 +391,13 @@ describe('sync.js — signed in, one document per task', () => {
     vi.advanceTimersByTime(60 * 1000 + 500);
     await vi.advanceTimersByTimeAsync(2000);
     expect(store.get(USER).sessions).toHaveLength(1);
+  });
+
+  it('pulls skill goals into a fresh client and keeps the local cache as a mirror', async () => {
+    store.set(USER, { sessions: [], categories: ['Work'], presets: [], skillMarks: { Work: 450 }, tasksMigratedAt: 'SERVER_TS' });
+    await mountAppAndSync();
+    await signIn();
+    expect(skillMarks()).toEqual({ Work: 450 });
   });
 
   it('a counter the session log proves too low is raised in the store, as an absolute value', async () => {
