@@ -2,7 +2,8 @@ const base = 'http://127.0.0.1:8080/v1/projects/pomodoro-bench/databases/(defaul
 const path = `${base}/syncs/ci-smoke`;
 const body = {
   fields: {
-    skillMarks: { mapValue: { fields: { Work: { integerValue: '300' } } } }
+    skillMarks: { mapValue: { fields: { Work: { integerValue: '300' } } } },
+    categories: { arrayValue: { values: [{ stringValue: 'Work' }] } }
   }
 };
 
@@ -18,4 +19,6 @@ if (!read.ok) throw new Error(`Firestore emulator read failed: ${read.status} ${
 const document = await read.json();
 const value = document.fields?.skillMarks?.mapValue?.fields?.Work?.integerValue;
 if (value !== '300') throw new Error(`Expected skillMarks.Work=300, got ${value}`);
+const category = document.fields?.categories?.arrayValue?.values?.[0]?.stringValue;
+if (category !== 'Work') throw new Error(`Expected categories[0]=Work, got ${category}`);
 console.log('Firestore emulator smoke test passed: skillMarks.Work=300');
