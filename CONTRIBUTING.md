@@ -34,3 +34,9 @@ Create a classic branch protection rule for `master` (and `main` if that branch 
 These settings must be applied on GitHub; committing this document does not enable them. Repository administrators can still change the protection settings themselves.
 
 Deployment is separate from this CI workflow. Existing hosting settings remain the source of deployment behavior.
+
+## Data versus cache
+
+Treat the browser cache and the product database as different responsibilities. Anything the user changes in the interface—such as a task, category, session, preset, skill goal, garden state, or completion state—must be represented in Firestore and must survive a fresh client. `localStorage` is allowed only as a cache, offline queue, migration copy, or explicitly device-local UI state. It must not be the only place where user data lives.
+
+Before merging a feature that adds or changes user data, document its Firestore shape and synchronization behavior, then add a regression test covering: user edit → database write → fresh-client read. Tests that inspect only `localStorage` do not prove persistence. Any exception must be named in the persistence contract and explain why the value is intentionally device-local.

@@ -27,3 +27,16 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+
+  persistence-contract:
+    name: Persistence contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx vitest run test/persistence-contract.test.js

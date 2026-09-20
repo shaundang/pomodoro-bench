@@ -211,7 +211,8 @@ function fingerprint(data){
   var sessions = (data && Array.isArray(data.sessions)) ? data.sessions : [];
   var categories = (data && Array.isArray(data.categories)) ? data.categories : [];
   var presets = (data && Array.isArray(data.presets)) ? data.presets : [];
-  return JSON.stringify([sessions.length, categories.length, presets.length,
+  var skillMarks = (data && data.skillMarks && typeof data.skillMarks === 'object') ? data.skillMarks : {};
+  return JSON.stringify([sessions.length, categories.length, presets.length, JSON.stringify(skillMarks),
     sessions.map(function(s){return s.id;}).join(','),
     presets.map(function(p){return p.id;}).join(',')]);
 }
@@ -228,6 +229,8 @@ function pushLocalSnapshot(){
     sessions: data.sessions,
     categories: data.categories,
     presets: data.presets,
+    skillMarks: data.skillMarks || {},
+    garden: data.garden || null,
     updatedAt: serverTimestamp()
   }, { merge: true }).then(function(){
     setStatus(signedInLabel() + ' — synced ' + new Date().toLocaleTimeString());
