@@ -6,10 +6,12 @@
   "scripts": {
     "start": "npx serve .",
     "test": "vitest run",
+    "test:emulator": "firebase emulators:exec --only firestore \"node scripts/firestore-emulator-smoke.mjs\"",
     "test:watch": "vitest"
   },
   "devDependencies": {
     "jsdom": "^26.1.0",
     "vitest": "^3.2.7"
+    ,"firebase-tools": "^14.16.0"
   }
 }
