@@ -1,4 +1,5 @@
 const base = 'http://127.0.0.1:8080/v1/projects/pomodoro-bench/databases/(default)/documents';
+const authBase = 'http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signUp?key=demo-pomodoro-bench';
 const path = `${base}/syncs/ci-smoke`;
 const body = {
   fields: {
@@ -21,4 +22,31 @@ const value = document.fields?.skillMarks?.mapValue?.fields?.Work?.integerValue;
 if (value !== '300') throw new Error(`Expected skillMarks.Work=300, got ${value}`);
 const category = document.fields?.categories?.arrayValue?.values?.[0]?.stringValue;
 if (category !== 'Work') throw new Error(`Expected categories[0]=Work, got ${category}`);
-console.log('Firestore emulator smoke test passed: skillMarks.Work=300');
+
+const signup = async (email) => {
+  const response = await fetch(authBase, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password: 'test-password-123', returnSecureToken: true })
+  });
+  if (!response.ok) throw new Error(`Auth emulator signup failed: ${response.status} ${await response.text()}`);
+  return response.json();
+};
+
+const firstUser = await signup('ci-owner@example.com');
+const secondUser = await signup('ci-other@example.com');
+const securedPath = `${base}/syncs/${firstUser.localId}`;
+const ownWrite = await fetch(securedPath, {
+  method: 'PATCH',
+  headers: { Authorization: `Bearer ${firstUser.idToken}`, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ fields: { skillMarks: { mapValue: { fields: { Learning: { integerValue: '120' } } } } } })
+});
+if (!ownWrite.ok) throw new Error(`Authenticated own write failed: ${ownWrite.status} ${await ownWrite.text()}`);
+
+const otherRead = await fetch(securedPath, { headers: { Authorization: `Bearer ${secondUser.idToken}` } });
+if (otherRead.status !== 403) throw new Error(`Expected cross-user read 403, got ${otherRead.status}`);
+
+const anonymousRead = await fetch(securedPath);
+if (anonymousRead.status !== 403) throw new Error(`Expected anonymous read 403, got ${anonymousRead.status}`);
+
+console.log('Firestore and Auth emulator security tests passed');

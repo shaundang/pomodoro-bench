@@ -6,7 +6,7 @@
   "scripts": {
     "start": "npx serve .",
     "test": "vitest run",
-    "test:emulator": "firebase emulators:exec --only firestore \"node scripts/firestore-emulator-smoke.mjs\"",
+    "test:emulator": "firebase emulators:exec --only firestore,auth \"node scripts/firestore-emulator-smoke.mjs\"",
     "test:watch": "vitest"
   },
   "devDependencies": {
