@@ -45,13 +45,13 @@ describe('statistics tiles', () => {
     const els = await mountApp();
 
     expect(els.streakDays.textContent).toBe('2/28');
-    expect(els.bestStreak.textContent).toBe('Practised today');
+    expect(els.bestStreak.textContent).toBe('Active today');
   });
 
   it('reports "no sessions" when there is no history', async () => {
     const els = await mountApp();
     expect(els.streakDays.textContent).toBe('0/28');
-    expect(els.bestStreak.textContent).toBe('No sessions logged yet');
+    expect(els.bestStreak.textContent).toBe('No focus sessions yet');
   });
 
   it('fills the daily budget bar against the 240-minute default target', async () => {
@@ -123,25 +123,74 @@ describe("today's log", () => {
     seedSessions([session({ date: daysAgoKey(1), task: 'Yesterday task' })]);
     const els = await mountApp();
 
-    expect(els.logList.textContent).toContain('No sessions logged yet today.');
+    expect(els.logList.textContent).toContain('No sessions yet today.');
     els.logPrevBtn.click();
     expect(els.logList.textContent).toContain('Yesterday task');
     els.logTodayBtn.click();
-    expect(els.logList.textContent).toContain('No sessions logged yet today.');
+    expect(els.logList.textContent).toContain('No sessions yet today.');
   });
 });
 
 describe('reset statistics', () => {
-  it('requires a second click within the window to actually clear sessions', async () => {
+  it('requires the explicit confirmation action to clear focus and break sessions', async () => {
+    seedSessions([session({}), session({ type: 'break' })]);
+    const els = await mountApp();
+    const panel = document.getElementById('resetStatsConfirm');
+    const confirm = document.getElementById('resetStatsConfirmBtn');
+    confirm.click();
+    expect(sessions()).toHaveLength(2);
+    els.resetStatsBtn.click();
+    expect(panel.hidden).toBe(false);
+    expect(document.activeElement.id).toBe('resetStatsCancelBtn');
+    els.resetStatsBtn.click();
+    expect(sessions()).toHaveLength(2);
+    confirm.click();
+    expect(sessions()).toHaveLength(0);
+    expect(panel.hidden).toBe(true);
+    expect(document.activeElement).toBe(els.resetStatsBtn);
+  });
+
+  it('cancel and Escape preserve history and restore focus', async () => {
     seedSessions([session({})]);
     const els = await mountApp();
-
+    const panel = document.getElementById('resetStatsConfirm');
     els.resetStatsBtn.click();
-    expect(els.resetStatsBtn.textContent).toBe('Click again to confirm');
+    document.getElementById('resetStatsCancelBtn').click();
+    expect(panel.hidden).toBe(true);
+    expect(document.activeElement).toBe(els.resetStatsBtn);
+    els.resetStatsBtn.click();
+    panel.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(panel.hidden).toBe(true);
     expect(sessions()).toHaveLength(1);
+    expect(document.activeElement).toBe(els.resetStatsBtn);
+  });
 
+  it('leaving Statistics dismisses a pending confirmation', async () => {
+    seedSessions([session({})]);
+    const els = await mountApp();
+    els.tabStatsBtn.click();
     els.resetStatsBtn.click();
-    expect(sessions()).toHaveLength(0);
-    expect(els.resetStatsBtn.textContent).toBe('Reset statistics');
+    els.tabTimerBtn.click();
+    els.tabStatsBtn.click();
+    expect(document.getElementById('resetStatsConfirm').hidden).toBe(true);
+    expect(sessions()).toHaveLength(1);
+  });
+});
+
+describe('session list disclosure', () => {
+  it('shows five recent entries, expands all entries, then collapses without deleting data', async () => {
+    seedSessions(Array.from({ length: 12 }, (_, index) => session({ id: 'log-' + index, timestamp: Date.now() - index * 1000 })));
+    const els = await mountApp();
+    expect(els.logList.querySelectorAll('.log-row')).toHaveLength(5);
+    expect(els.logExpandBtn.textContent).toBe('Show all (12)');
+    els.logExpandBtn.click();
+    expect(els.logList.querySelectorAll('.log-row')).toHaveLength(12);
+    expect(els.logExpandBtn.getAttribute('aria-expanded')).toBe('true');
+    expect(els.logExpandBtn.textContent).toBe('Show less');
+    els.logExpandBtn.click();
+    expect(els.logList.querySelectorAll('.log-row')).toHaveLength(5);
+    expect(sessions()).toHaveLength(12);
+    els.logPrevBtn.click();
+    expect(els.logExpandBtn.hidden).toBe(true);
   });
 });

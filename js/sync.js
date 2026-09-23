@@ -294,6 +294,7 @@ function stopPolling(){
 function startSyncingFor(uid){
   stopSyncing();
   currentUid = uid;
+  PB().clearSkillMarks();
   setStatus('Connecting…');
 
   var userRef = doc(db, 'syncs', uid);
