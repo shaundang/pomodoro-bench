@@ -1,16 +1,6 @@
 (function(){
   "use strict";
 
-  // No study compares session lengths across activity types, so these
-  // numbers are reasoned from mechanism (switching cost, recovery time,
-  // batching) rather than measured — they are a sane starting point to
-  // calibrate away from, not an optimum. What the evidence does support:
-  // break length should scale with the work that preceded it, so every
-  // pair here keeps at least a 1:5 work-to-break ratio.
-  //
-  // Before changing any number here, read docs/session-length-evidence.md —
-  // it records what is actually supported, which widely-repeated figures
-  // trace to no study, and why each of these values is what it is.
   var PRESETS = [
     {id:'deep', label:'Deep work / coding', work:50, brk:10, note:'Long blocks earn their keep by avoiding task-switching cost — not by "reaching flow".'},
     {id:'writing', label:'Writing', work:45, brk:15, note:'A generous 1:3 reset. Writing a little every day beats occasional marathons.'},
@@ -27,19 +17,16 @@
   var STORAGE_TIMER = 'pomodoroBench.timer.v1';
   var STORAGE_PRESETS = 'pomodoroBench.customPresets.v1';
   var STORAGE_SKILL_MARKS = 'pomodoroBench.skillMarks.v1';
-  // Applied to any skill with no goal of its own. One number to change here.
+  var STORAGE_SKILL_MARKS_EXPIRES = 'pomodoroBench.skillMarks.expiresAt.v1';
+  var SKILL_MARKS_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
   var DEFAULT_SKILL_GOAL_HOURS = 10000;
-  // Rungs the bar fills toward on its way to the goal. Without them a 10,000h
-  // goal leaves the bar at 1% for years, which is no use to anyone — least of
-  // all someone who cannot estimate the total a skill needs and just wants to
-  // see the next step. Motivation also rises as a goal comes into reach, so a
-  // near rung is worth more than a distant one.
   var SKILL_MILESTONES = [10, 50, 100, 500, 1000, 2500, 5000, 10000];
   var DEFAULT_CATEGORIES = ['Learning', 'Work', 'Personal'];
 
   var els = {
     presetGrid: document.getElementById('presetGrid'),
     presetNote: document.getElementById('presetNote'),
+    presetDetails: document.getElementById('presetDetails'),
     presetAddBtn: document.getElementById('presetAddBtn'),
     presetAddForm: document.getElementById('presetAddForm'),
     presetNewName: document.getElementById('presetNewName'),
@@ -97,7 +84,6 @@
     logDatePicker: document.getElementById('logDatePicker'),
     logTodayBtn: document.getElementById('logTodayBtn'),
     logExpandBtn: document.getElementById('logExpandBtn'),
-    logCountNote: document.getElementById('logCountNote'),
     logList: document.getElementById('logList'),
     undoToast: document.getElementById('undoToast'),
     undoText: document.getElementById('undoText'),
@@ -115,6 +101,9 @@
     customRangePicker: document.getElementById('customRangePicker'),
     customRangeCalendar: document.getElementById('customRangeCalendar'),
     resetStatsBtn: document.getElementById('resetStatsBtn'),
+    resetStatsConfirm: document.getElementById('resetStatsConfirm'),
+    resetStatsCancelBtn: document.getElementById('resetStatsCancelBtn'),
+    resetStatsConfirmBtn: document.getElementById('resetStatsConfirmBtn'),
     tabTimerBtn: document.getElementById('tabTimerBtn'),
     tabStatsBtn: document.getElementById('tabStatsBtn'),
     viewTimer: document.getElementById('viewTimer'),
@@ -151,12 +140,11 @@
   var RING_C = 2 * Math.PI * RING_R;
   els.ringProgress.style.strokeDasharray = RING_C.toFixed(2);
 
-  // ---------- state ----------
   var state = {
     presetId: 'deep',
     workMin: 50,
     breakMin: 10,
-    mode: 'focus', // 'focus' | 'break' | 'longbreak'
+    mode: 'focus',
     totalMs: 50 * 60 * 1000,
     remainingMs: 50 * 60 * 1000,
     running: false,
@@ -166,35 +154,28 @@
     activeTaskName: '',
     activeTaskCategory: '',
     proportionalBreak: false,
-    // One if-then intention per day, stamped with the day it belongs to so it
-    // expires on its own rather than lingering into tomorrow.
     dayIntention: '',
     dayIntentionDate: null,
-    // Minutes of focused work targeted per day. Four hours is where the
-    // deliberate-practice evidence puts the point of diminishing returns.
     dailyBudgetMin: 240,
-    // Minutes actually focused in the phase just finished — the basis for a
-    // scaled break. Null until a focus phase has ended at least once.
     lastFocusMin: null
   };
 
-  // UI-only state, not persisted
   var logViewDate = todayKey();
   var editingLogId = null;
   var editingTaskId = null;
   var editingCategoryTaskId = null;
-  var editingTaskNotesDraft = null; // [{id, pomodoroNumber, description}], only while editingTaskId is set
-  var lastDeleted = null; // {type:'session'|'task', data}
+  var editingTaskNotesDraft = null;
+  var lastDeleted = null;
   var undoTimeout = null;
   var STORAGE_CATEGORY_RANGE = 'pomodoroBench.categoryRange.v1';
-  var categoryRange = 'all'; // 'day' | 'week' | 'month' | 'year' | 'all' | 'custom' — which period the Insights charts show
+  var categoryRange = 'all';
   var STORAGE_CUSTOM_RANGE = 'pomodoroBench.customRange.v1';
-  var customRangeFrom = ''; // 'YYYY-MM-DD', only meaningful when categoryRange === 'custom'
+  var customRangeFrom = '';
   var customRangeTo = '';
-  var openDatePicker = null; // the one open <calendar popover> instance, so opening another closes it
-  var heatmapViewYear = new Date().getFullYear(); // which year the heatmap is currently showing
+  var openDatePicker = null;
+  var heatmapViewYear = new Date().getFullYear();
   var STORAGE_LOG_EXPANDED = 'pomodoroBench.logExpanded.v1';
-  var logExpanded = false; // whether Today's log is showing its taller, non-scrolling view
+  var logExpanded = false;
 
   function loadTimerState(){
     try{
@@ -206,19 +187,18 @@
       if(state.running && state.endAt){
         var remaining = state.endAt - nowMs();
         if(remaining <= 0){
-          // completed while away: snap to 0, let boot logic handle completion
           state.remainingMs = 0;
         } else {
           state.remainingMs = remaining;
         }
       }
-    }catch(e){ /* ignore corrupt storage */ }
+    }catch(e){   }
   }
 
   function saveTimerState(){
     try{
       localStorage.setItem(STORAGE_TIMER, JSON.stringify(state));
-    }catch(e){ /* storage unavailable */ }
+    }catch(e){   }
   }
 
   function nowMs(){ return new Date().getTime(); }
@@ -227,20 +207,11 @@
     return 'id_' + nowMs().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
   }
 
-  // Fired by every save of something the sync layer carries, so js/sync.js
-  // can push right away instead of waiting for its poll to notice — a tick
-  // on a phone that is locked two seconds later used to sit there unpushed
-  // until the app was next opened.
   function notifyLocalChange(what){
     try{ window.dispatchEvent(new CustomEvent('pomodoroBench:changed', {detail: {what: what}})); }
-    catch(e){ /* CustomEvent unavailable — the poll still catches it */ }
+    catch(e){   }
   }
 
-  // ---------- session-length presets ----------
-  // The seven built-ins above are fixed; anything the user adds lives in its
-  // own storage key and is appended to them. Every read of the preset list
-  // goes through allPresets() so a custom type behaves like a built-in
-  // everywhere — the timer, the task cards, the task-edit dropdown.
   function loadCustomPresets(){
     try{
       var raw = localStorage.getItem(STORAGE_PRESETS);
@@ -253,7 +224,7 @@
   }
 
   function saveCustomPresets(arr){
-    try{ localStorage.setItem(STORAGE_PRESETS, JSON.stringify(arr)); }catch(e){ /* ignore */ }
+    try{ localStorage.setItem(STORAGE_PRESETS, JSON.stringify(arr)); }catch(e){   }
     notifyLocalChange('presets');
   }
 
@@ -265,10 +236,6 @@
     return allPresets().filter(function(p){ return p.id === id; })[0];
   }
 
-  // Built-ins keep a colour fixed by position, so they never shift when the
-  // user adds a type. Custom ones hash into the same seven-colour pool —
-  // collisions with a built-in are possible and harmless, since there are
-  // only seven session colours defined in CSS.
   function presetColorClass(id){
     var idx = PRESETS.map(function(p){ return p.id; }).indexOf(id);
     if(idx >= 0) return 'session-color-' + (idx % 7);
@@ -294,8 +261,6 @@
         els.presetGrid.appendChild(btn);
         return;
       }
-      // A delete control cannot sit inside the preset button (nested buttons
-      // are invalid), so custom rows wrap the pair side by side.
       var row = document.createElement('div');
       row.className = 'preset-row';
       var del = document.createElement('button');
@@ -311,6 +276,7 @@
     });
     var current = findPreset(state.presetId);
     els.presetNote.textContent = current ? (current.note || '') : '';
+    els.presetDetails.hidden = !els.presetNote.textContent;
   }
 
   function addCustomPreset(label, work, brk){
@@ -328,9 +294,6 @@
     renderPresets();
   }
 
-  // Tasks store their own workMin/breakMin, so pointing a stranded task at
-  // the built-in 'custom' keeps its actual timings intact — only the label
-  // it displays changes.
   function deleteCustomPreset(id){
     var arr = loadCustomPresets().filter(function(p){ return p.id !== id; });
     saveCustomPresets(arr);
@@ -356,10 +319,6 @@
     renderTimer();
   }
 
-  // ---------- categories ----------
-  // No standalone management screen — categories are created and assigned
-  // right where they're used: the "+ New category…" option in any category
-  // picker (the add-task row, or a task card's category chip).
   function loadCategories(){
     try{
       var raw = localStorage.getItem(STORAGE_CATEGORIES);
@@ -373,7 +332,7 @@
   }
 
   function saveCategories(arr){
-    try{ localStorage.setItem(STORAGE_CATEGORIES, JSON.stringify(arr)); }catch(e){ /* ignore */ }
+    try{ localStorage.setItem(STORAGE_CATEGORIES, JSON.stringify(arr)); }catch(e){   }
     notifyLocalChange('categories');
   }
 
@@ -388,26 +347,11 @@
     }
   }
 
-  // 8 hues (see css/style.css --catclr-0..7: blue, orange, aqua, yellow,
-  // magenta, green, violet, red) so categories read as visibly different at
-  // a glance rather than a handful of near-duplicates. The set and order
-  // are validated per the dataviz skill's color-formula (OKLCH lightness
-  // band, chroma floor, CVD-simulated adjacent-pair separation) rather than
-  // hand-picked — the previous 6-color set looked like only ~3 colors in
-  // practice for two separate reasons, both fixed here: this hash used to
-  // be a plain "sum of char codes mod N", which is heavily biased for short
-  // lowercase-ish English words (letter codes cluster mod 6), so most
-  // category names collapsed onto the same 2-3 buckets even though more
-  // colors existed; and, independently, several of those 6 hues (e.g. the
-  // teal and the magenta) were too close together to tell apart even with
-  // a perfectly fair hash. Multiplying-and-folding each character in (a
-  // classic string hash) mixes the bits far better and spreads names evenly
-  // across all the buckets.
   var CATEGORY_COLOR_COUNT = 8;
   function categoryColorIndex(name){
     var hash = 0;
     for(var i=0;i<name.length;i++){
-      hash = (hash * 31 + name.charCodeAt(i)) >>> 0; // >>>0 keeps it a safe 32-bit uint
+      hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
     }
     return hash % CATEGORY_COLOR_COUNT;
   }
@@ -437,10 +381,6 @@
     if(currentValue) selectEl.value = currentValue;
   }
 
-  // Wires a select + hidden "create new" text input into one picker:
-  // choosing "+ New category…" reveals the input; Enter/blur commits it
-  // (creates the category and calls onCommit), Escape cancels back to the
-  // previously selected value. Picking an existing option commits directly.
   function wireCategoryPicker(selectEl, createInputEl, initialValue, onCommit){
     var lastValue = initialValue;
 
@@ -522,9 +462,6 @@
     selectEl.value = currentId;
   }
 
-  // Keeps the currently active task's stored session length (preset + exact
-  // minutes) up to date whenever the top "Session length" controls change,
-  // so reactivating that task later restores the same duration.
   function syncActiveTaskSessionLength(){
     if(!state.activeTaskId) return;
     var tasks = loadTasks();
@@ -539,12 +476,6 @@
     renderTasks();
   }
 
-  // ---------- timer core ----------
-  // The preset's own work/break pair already expresses a ratio (deep is
-  // 1:5, writing 1:3), so scaling a break needs no extra setting — it just
-  // applies that same ratio to the time actually focused. Cut a 50-minute
-  // block short at 10 minutes and the break follows it down to 2, instead
-  // of handing out the full 10 for a fifth of the work.
   function breakRatio(){
     return state.workMin > 0 ? (state.breakMin / state.workMin) : 0.2;
   }
@@ -608,9 +539,6 @@
     document.title = (state.running ? formatTime(state.remainingMs) + ' · ' + titleTask : '') + 'Pomodoro Bench';
   }
 
-  // Spells out the ratio in the user's own numbers, so the effect is legible
-  // before a break ever starts — and greys the fixed Break box when the
-  // scaled value is what will actually be used.
   function renderScaleBreak(){
     if(!els.scaleBreakInput) return;
     els.scaleBreakInput.checked = !!state.proportionalBreak;
@@ -619,18 +547,13 @@
       els.scaleBreakNote.textContent = '';
       return;
     }
-    var ratio = breakRatio();
-    var oneIn = ratio > 0 ? Math.round(1 / ratio) : 0;
-    var parts = ['1:' + oneIn + ' of focused time'];
+    var parts = [state.workMin + ' min focus → ' + state.breakMin + ' min break'];
     if(typeof state.lastFocusMin === 'number'){
-      parts.push('last session ' + state.lastFocusMin + ' min → ' + proportionalBreakMinutes(state.lastFocusMin) + ' min break');
+      parts.push('Last session: ' + state.lastFocusMin + ' min focus → ' + proportionalBreakMinutes(state.lastFocusMin) + ' min break');
     }
     els.scaleBreakNote.textContent = parts.join(' · ');
   }
 
-  // Today's logged focus minutes against the daily target. Held in a module
-  // var because refreshStats() is what computes it, while the target input
-  // can re-render the bar on its own without recounting sessions.
   var lastTodayFocusMin = 0;
 
   function renderBudget(todayMin){
@@ -643,7 +566,7 @@
     els.budgetFill.classList.toggle('budget-fill-full', lastTodayFocusMin >= target);
     els.budgetLabel.textContent = formatDuration(lastTodayFocusMin) + ' / ' + formatDuration(target) + ' focused today';
     els.budgetNote.textContent = lastTodayFocusMin >= target
-      ? 'At your daily budget — past roughly four hours, more focused work buys little.'
+      ? 'Daily target reached.'
       : '';
   }
 
@@ -684,13 +607,6 @@
     renderTimer();
   }
 
-  // ---------- session intention & review ----------
-  // The only pair of features that moves this app from what the expertise
-  // literature calls "naive practice" (merely putting in time) toward
-  // "purposeful practice" (a specific improvement goal plus feedback on how
-  // it went). A timer can never reach "deliberate practice" — that needs a
-  // qualified teacher giving immediate feedback — so this is the honest
-  // ceiling. See docs/motivation-evidence.md.
   var pendingReviewSessionId = null;
 
   function needsDayIntention(){
@@ -715,11 +631,11 @@
   }
 
   function openIntentionPrompt(){
-    els.intentTitle.textContent = 'Before your first session today';
-    els.intentPrompt.textContent = 'Finish this out loud, in one sentence: "When I sit down, I will …". Saying it over to yourself is the part that works — the field evidence finds if-then phrasing and rehearsal help, while writing it down slightly weakens the effect. So the box is optional.';
+    els.intentTitle.textContent = 'Set an intention';
+    els.intentPrompt.textContent = 'Complete the sentence: “When I sit down, I will…”';
     els.intentInput.hidden = false;
     els.intentInput.value = state.dayIntention || '';
-    els.intentFoot.textContent = 'Asked once a day, not once a session.';
+    els.intentFoot.textContent = 'Optional. Shown once each day.';
     renderIntentActions([
       {label:'Start focus', primary:true, onClick: function(){ commitIntention(true); }},
       {label:'Skip', onClick: function(){ commitIntention(false); }}
@@ -733,12 +649,9 @@
     state.dayIntentionDate = todayKey();
     saveTimerState();
     closeIntentCard();
-    startPause(); // needsDayIntention() is now false, so this starts the timer
+    startPause();
   }
 
-  // Informational feedback raises intrinsic motivation; tangible rewards for
-  // finishing lower it. So this asks how the session went and says nothing
-  // about whether that was good enough — no score, no target to fall short of.
   function openSessionReview(sessionId){
     pendingReviewSessionId = sessionId;
     els.intentTitle.textContent = 'How did that session go?';
@@ -746,7 +659,7 @@
       ? 'Today’s intention: "' + state.dayIntention + '"'
       : 'One tap, for your own record.';
     els.intentInput.hidden = true;
-    els.intentFoot.textContent = 'Shows up in the log so you can see which sessions actually landed.';
+    els.intentFoot.textContent = 'Saved with this session for you to review later.';
     renderIntentActions([
       {label:'Scattered', onClick: function(){ commitReview('scattered'); }},
       {label:'Steady', onClick: function(){ commitReview('steady'); }},
@@ -769,16 +682,11 @@
 
   function startPause(){
     if(state.mode === 'focus' && !state.activeTaskId && !state.running) return;
-    // Gate only the first focus session of the day, not every one: the
-    // implementation-intention evidence finds one or two plans outperform
-    // three to five, and a prompt on every start is friction that gets the
-    // whole tool abandoned. Returns here and re-enters via the card's button.
     if(!state.running && state.mode === 'focus' && needsDayIntention()){
       openIntentionPrompt();
       return;
     }
     if(state.running){
-      // pause
       state.running = false;
       state.remainingMs = Math.max(0, state.endAt - nowMs());
       state.endAt = null;
@@ -798,9 +706,6 @@
     }
   }
 
-  // Ask once, and only in response to the user's own click (browsers refuse
-  // silent/auto permission prompts). Safe to call repeatedly — a no-op once
-  // permission has already been granted or denied.
   function requestNotificationPermission(){
     if(!('Notification' in window)) return;
     if(Notification.permission === 'default'){
@@ -808,20 +713,12 @@
     }
   }
 
-  // Desktop popup for phase completion, in addition to the audio chime.
-  // Falls back silently if the API is unavailable or permission was denied.
   function notifyPhaseEnd(title, body){
     try{
       if(!('Notification' in window)) return;
       if(Notification.permission !== 'granted') return;
       var n = new Notification(title, {
         body: body,
-        // One tag so a new phase replaces the previous notification rather
-        // than stacking up. But replacing is silent by default: an unread
-        // notification sitting in the OS tray would be updated in place with
-        // no banner and no sound, so after the first one the app appeared to
-        // stop notifying entirely until the tray was cleared. renotify says
-        // alert again on replacement, which is the whole point here.
         tag: 'pomodoro-bench-phase',
         renotify: true
       });
@@ -829,7 +726,7 @@
         window.focus();
         n.close();
       };
-    }catch(e){ /* notifications unavailable, stay silent */ }
+    }catch(e){   }
   }
 
   function completePhase(){
@@ -841,14 +738,13 @@
     if(state.mode === 'focus'){
       var loggedId = logSession(state.workMin, 'completed', 'focus');
       incrementTaskCompleted(state.activeTaskId);
-      state.lastFocusMin = state.workMin; // ran to term, so the full length
+      state.lastFocusMin = state.workMin;
       state.completedInCycle += 1;
       var goingLong = state.completedInCycle % 4 === 0;
       state.mode = goingLong ? 'longbreak' : 'break';
       showBanner('Focus session done. Nice work — take a break.', 'Start break');
       notifyPhaseEnd('Focus session done 🍅', 'Nice work — take a break.');
     } else {
-      // state.totalMs is this break's own duration (short or long), set when it started.
       logSession(Math.round(state.totalMs / 60000), 'completed', 'break');
       state.mode = 'focus';
       showBanner('Break’s over. Ready when you are.', 'Start focus');
@@ -859,7 +755,6 @@
     renderTimer();
     saveTimerState();
     refreshStats();
-    // After refreshStats(), which re-renders the log the rating will land in.
     if(loggedId) openSessionReview(loggedId);
   }
 
@@ -874,7 +769,6 @@
     startPause();
   });
 
-  // gentle two-tone chime via WebAudio, no external asset
   var audioCtx = null;
   function playChime(strength){
     try{
@@ -898,7 +792,7 @@
         osc.start(start);
         osc.stop(start + 0.34);
       });
-    }catch(e){ /* audio unavailable, stay silent */ }
+    }catch(e){   }
   }
 
   function resetTimer(){
@@ -922,14 +816,7 @@
 
     state.endAt = null;
     if(state.mode === 'focus'){
-      // Mirror completePhase()'s bookkeeping exactly: advance the cycle
-      // counter here too, otherwise skipping a focus session leaves it one
-      // behind and the long-break condition re-fires on the next real
-      // completion (e.g. skip → long break → skip that too → finish the
-      // next focus session and it's long break again instead of short).
       state.completedInCycle += 1;
-      // Only what was actually focused, so a scaled break shrinks to match
-      // a session cut short rather than paying out the full rest.
       state.lastFocusMin = elapsedMin;
       var goingLong = state.completedInCycle % 4 === 0;
       state.mode = goingLong ? 'longbreak' : 'break';
@@ -941,11 +828,6 @@
     els.banner.hidden = true;
   }
 
-  // ---------- tasks ----------
-  // Where the unreadable contents of the tasks key are parked, so the next
-  // saveTasks does not write a fresh list straight over the only copy of what
-  // the user had. Written once and then left alone: whoever finds it can
-  // recover by hand, and a second corruption never overwrites the first.
   var STORAGE_TASKS_CORRUPT = STORAGE_TASKS + '.corrupt';
 
   function stashCorruptTasks(raw){
@@ -954,15 +836,9 @@
       if(localStorage.getItem(STORAGE_TASKS_CORRUPT) == null){
         localStorage.setItem(STORAGE_TASKS_CORRUPT, raw);
       }
-    }catch(e){ /* storage unavailable — nothing more we can do */ }
+    }catch(e){   }
   }
 
-  // Every task operation is load → mutate → save, so whatever this returns is
-  // what the next save writes back. Returning [] for a store that merely
-  // failed to parse used to mean the following add/edit/delete replaced the
-  // user's whole task list with that one change. Now an unreadable store is
-  // set aside first, and a list that parses but has junk entries in it is
-  // cleaned per entry rather than thrown away wholesale.
   function loadTasks(){
     var raw = null;
     try{ raw = localStorage.getItem(STORAGE_TASKS); }
@@ -987,48 +863,21 @@
       if(typeof t.workMin !== 'number'){ t.workMin = 50; migrated = true; }
       if(typeof t.breakMin !== 'number'){ t.breakMin = 10; migrated = true; }
       if(!Array.isArray(t.notes)){ t.notes = []; migrated = true; }
-      // Tasks finished before this field existed have no way to know when
-      // that happened — treat them as done "in the past" so they hide
-      // immediately rather than lingering on the list forever.
       if(t.done && typeof t.doneAt !== 'number'){ t.doneAt = 0; migrated = true; }
       if(!t.done && t.doneAt){ t.doneAt = null; migrated = true; }
-      // When `done` last flipped, in either direction. Kept apart from
-      // updatedAt so a rename or a pomodoro counted on one device cannot
-      // outrank a tick made on another — see applyIncomingBackup. A task
-      // done before this stamp existed borrows its doneAt; one never ticked
-      // sits at 0, which any real tick beats.
       if(typeof t.doneChangedAt !== 'number'){ t.doneChangedAt = (t.done && t.doneAt) ? t.doneAt : 0; migrated = true; }
-      // Last-modified stamp used by applyIncomingBackup to decide, per
-      // task, which side of a sync pull is newer. Tasks written before
-      // this field existed get their creation time as a floor — never 0,
-      // or a stale remote copy with no stamp of its own would look newer.
       if(typeof t.updatedAt !== 'number'){ t.updatedAt = t.createdAt || 0; migrated = true; }
     });
     if(migrated) saveTasks(arr);
     return arr;
   }
 
-  // Writes the local task cache only. Signed out, this cache *is* the task
-  // store. Signed in, Firestore is the store — one document per task under
-  // syncs/{uid}/tasks — and this cache is a mirror of it that js/sync.js
-  // rewrites from every collection snapshot (see replaceTasksFromRemote).
-  // Every user-made change goes through forwardTaskOp as well, so the
-  // change reaches the store as a small per-task write rather than as a
-  // whole-list overwrite.
   function saveTasks(arr){
-    try{ localStorage.setItem(STORAGE_TASKS, JSON.stringify(arr)); }catch(e){ /* ignore */ }
+    try{ localStorage.setItem(STORAGE_TASKS, JSON.stringify(arr)); }catch(e){   }
     notifyLocalChange('tasks');
   }
 
-  // ---- task store backend (installed by js/sync.js while signed in) ----
-  // An op is one of:
-  //   {type:'set',       id, task}                — create or fully replace
-  //   {type:'update',    id, fields}              — patch named fields
-  //   {type:'increment', id, field, by, fields}   — atomic counter + patch
-  //   {type:'delete',    id}
   var taskBackend = null;
-  // Ops made while signed out are remembered by id, so the next sign-in
-  // can upload exactly those tasks (and deletes) instead of guessing.
   var STORAGE_TASKS_PENDING = STORAGE_TASKS + '.pending';
 
   function setTaskBackend(backend){
@@ -1037,7 +886,7 @@
 
   function forwardTaskOp(op){
     if(taskBackend){
-      try{ taskBackend.apply(op); }catch(e){ /* backend reports its own errors */ }
+      try{ taskBackend.apply(op); }catch(e){   }
       return;
     }
     recordPendingTaskOp(op);
@@ -1064,29 +913,22 @@
       delete p.deletes[op.id];
       p.upserts[op.id] = true;
     }
-    try{ localStorage.setItem(STORAGE_TASKS_PENDING, JSON.stringify(p)); }catch(e){ /* ignore */ }
+    try{ localStorage.setItem(STORAGE_TASKS_PENDING, JSON.stringify(p)); }catch(e){   }
   }
 
-  // Returns {upserts:[ids], deletes:[ids]} and clears them.
   function takePendingTaskOps(){
     var p = loadPendingTaskOps();
-    try{ localStorage.removeItem(STORAGE_TASKS_PENDING); }catch(e){ /* ignore */ }
+    try{ localStorage.removeItem(STORAGE_TASKS_PENDING); }catch(e){   }
     return {upserts: Object.keys(p.upserts), deletes: Object.keys(p.deletes)};
   }
 
-  // Keeps a dated copy of the current task cache under its own key. Used
-  // right before the store moves to Firestore, so nothing that was on this
-  // device is ever more than one localStorage key away.
   function backupTasksCache(label){
     try{
       var raw = localStorage.getItem(STORAGE_TASKS);
       if(raw) localStorage.setItem(STORAGE_TASKS + '.' + label + '.' + nowMs(), raw);
-    }catch(e){ /* ignore */ }
+    }catch(e){   }
   }
 
-  // The store spoke: this is the full set of tasks now. Replaces the cache
-  // wholesale (deletions included), then brings everything that hangs off
-  // a task id — the active task, an open edit card — back in line.
   function replaceTasksFromRemote(remoteTasks){
     var arr = Array.isArray(remoteTasks) ? remoteTasks.filter(function(t){ return !!t && typeof t === 'object' && t.id; }) : [];
     saveTasks(arr);
@@ -1133,9 +975,6 @@
     state.activeTaskId = t.id;
     state.activeTaskName = t.name;
     state.activeTaskCategory = t.category;
-    // A task can point at a custom type this device no longer has — deleted
-    // here, or never synced in. Fall back to 'custom' so the preset grid
-    // still shows a selection; the task's own workMin/breakMin still apply.
     state.presetId = findPreset(t.sessionPresetId) ? t.sessionPresetId : 'custom';
     state.workMin = t.workMin;
     state.breakMin = t.breakMin;
@@ -1155,20 +994,10 @@
     saveTimerState();
   }
 
-  // The active task's name and category are copied into timer state so the
-  // header and logSession can use them without a lookup. Local edits keep
-  // those copies current, but a sync pull rewrites tasks behind the timer's
-  // back — so after a merge, re-read the active task and bring the copies
-  // back in line, or sessions get logged under a name the task no longer
-  // has. A task finished on another device also stops being active here,
-  // the same as ticking it off locally would — except while a session is
-  // running on it, which finishes under the task it started with.
   function reconcileActiveTask(tasks){
     if(!state.activeTaskId) return;
     var t = tasks.filter(function(x){ return x.id === state.activeTaskId; })[0];
     if(!t){
-      // Deleted on another device. Same rule as done: a running session
-      // finishes under the task it started with.
       if(!state.running){ clearActiveTask(); renderTimer(); }
       return;
     }
@@ -1247,9 +1076,6 @@
     t.estimate = Math.max(1, Math.min(20, parseInt(estInput.value, 10) || t.estimate));
 
     var chosenPreset = findPreset(sessionInput.value);
-    // Only a genuine session-length change should touch the running/paused
-    // phase — editing the name, category or notes on the active task must
-    // never wipe out time already spent on a paused session.
     var presetChanged = !!chosenPreset && chosenPreset.id !== t.sessionPresetId;
     if(chosenPreset){
       t.sessionPresetId = chosenPreset.id;
@@ -1287,12 +1113,6 @@
     renderTimer();
   }
 
-  // Pomodoros finished per task, counted from the session log: one entry
-  // per focus session that ran to term and carries this task's id. The log
-  // is the record of what actually happened and has always synced fully
-  // (additive by id), whereas t.completed is a separate counter that used
-  // to stay behind on the device it was bumped on. Sessions logged before
-  // sessions carried a taskId cannot be attributed and are not counted.
   function completedBySessions(sessions){
     var by = {};
     (sessions || loadSessions()).forEach(function(s){
@@ -1303,22 +1123,11 @@
     return by;
   }
 
-  // What the card shows: never less than the stored counter (old sessions
-  // without a taskId still count there), never less than what the log
-  // proves happened.
   function effectiveCompleted(t, bySessions){
     var derived = (bySessions && bySessions[t.id]) || 0;
     return Math.max(typeof t.completed === 'number' ? t.completed : 0, derived);
   }
 
-  // One-time repair of the stored counters from the log: any task whose
-  // log count is higher gets its counter raised to match, so the number in
-  // the store and the number on the card agree again. Idempotent — a second
-  // run finds nothing to raise. With `forward` the raise is also written to
-  // the task store as an absolute value (js/sync.js runs it once the cache
-  // mirrors the store); without it only the local cache changes and no
-  // pending op is recorded, because a signed-out repair will simply run
-  // again, against the store's copy, after the next sign-in.
   function repairCompletedCounts(opts){
     var forward = !!(opts && opts.forward);
     var by = completedBySessions();
@@ -1351,17 +1160,12 @@
     t.completed += 1;
     t.updatedAt = nowMs();
     saveTasks(tasks);
-    // An atomic increment in the store, so two devices each finishing a
-    // pomodoro on this task both count — neither overwrites the other.
     forwardTaskOp({type:'increment', id: id, field: 'completed', by: 1, fields: {updatedAt: t.updatedAt}});
     renderTasks();
   }
 
   function renderTasks(){
     var allTasks = loadTasks();
-    // Unfinished tasks always stay put; a finished one only stays visible
-    // through the rest of the day it was checked off, then drops out of the
-    // list on its own from the next day — no manual "clear completed" needed.
     var today = todayKey();
     var tasks = allTasks.filter(function(t){
       return !t.done || todayKey(new Date(t.doneAt || 0)) === today;
@@ -1380,9 +1184,6 @@
     var categories = loadCategories();
     var bySessions = completedBySessions();
     tasks.forEach(function(stored){
-      // A display copy: the card shows the count the log proves, without
-      // the render itself writing anything back (repairCompletedCounts
-      // does that, once, on purpose).
       var t = Object.assign({}, stored, {completed: effectiveCompleted(stored, bySessions)});
       if(t.id === editingTaskId){
         var editLi = buildTaskEditCard(t);
@@ -1392,7 +1193,7 @@
         var catSelect = editLi.querySelector('.edit-task-category');
         var catCreate = editLi.querySelector('.edit-task-category-create');
         fillCategorySelectWithNew(catSelect, categories, t.category);
-        wireCategoryPicker(catSelect, catCreate, t.category, function(){ /* Save button reads the value directly */ });
+        wireCategoryPicker(catSelect, catCreate, t.category, function(){   });
         renderNoteRows(editLi.querySelector('.note-rows'));
       } else {
         var li = buildTaskCard(t);
@@ -1489,9 +1290,6 @@
     });
   }
 
-  // Reads the current DOM values of every note row back into the in-memory
-  // draft, so adding/removing a row (which re-renders) doesn't drop
-  // whatever the other rows already had typed into them.
   function syncNotesDraftFromDom(cardEl){
     if(!editingTaskNotesDraft) return;
     cardEl.querySelectorAll('.note-row').forEach(function(rowEl){
@@ -1558,7 +1356,6 @@
     els.newTaskName.focus();
   });
 
-  // ---------- generic undo (sessions + tasks) ----------
   function showUndo(text){
     els.undoText.textContent = text;
     els.undoToast.hidden = false;
@@ -1578,8 +1375,6 @@
       refreshStats();
     } else if(lastDeleted.type === 'task'){
       var tasks = loadTasks();
-      // Undoing a delete is itself a change worth syncing (the other device
-      // never saw the delete, but it also never saw this task come back).
       lastDeleted.data.updatedAt = nowMs();
       tasks.push(lastDeleted.data);
       saveTasks(tasks);
@@ -1591,7 +1386,6 @@
     if(undoTimeout) clearTimeout(undoTimeout);
   });
 
-  // ---------- sessions / stats ----------
   function todayKey(d){
     d = d || new Date();
     var y = d.getFullYear();
@@ -1610,7 +1404,6 @@
         if(!s.id){ s.id = generateId(); migrated = true; }
         if(!s.status){ s.status = 'completed'; migrated = true; }
         if(!s.task){ s.task = s.note || 'Untitled task'; migrated = true; }
-        // Older entries predate break tracking — they're all focus sessions.
         if(!s.type){ s.type = 'focus'; migrated = true; }
       });
       if(migrated) saveSessions(arr);
@@ -1619,7 +1412,7 @@
   }
 
   function saveSessions(arr){
-    try{ localStorage.setItem(STORAGE_SESSIONS, JSON.stringify(arr)); }catch(e){ /* ignore */ }
+    try{ localStorage.setItem(STORAGE_SESSIONS, JSON.stringify(arr)); }catch(e){   }
     notifyLocalChange('sessions');
   }
 
@@ -1646,9 +1439,6 @@
 
   function refreshStats(){
     var sessions = loadSessions();
-    // The featured tiles, streaks and heatmap are all about focus work —
-    // break entries exist for the hour-of-day chart and the daily log, but
-    // must not inflate "minutes worked" or "pomodoros completed".
     var focusSessions = sessions.filter(function(s){ return s.type !== 'break'; });
     var today = todayKey();
 
@@ -1670,8 +1460,6 @@
     els.allTimePomodoros.textContent = allTimePomodoros + (allTimePomodoros === 1 ? ' pomodoro' : ' pomodoros');
     renderBudget(todayMin);
 
-    // "Today" vs the daily average over every other day that has sessions —
-    // gives the featured tile a comparison instead of a bare absolute number.
     var daysLogged = Object.keys(daysWithSessions).length;
     var loggedToday = todayMin > 0 || todayCount > 0;
     var otherDaysLogged = daysLogged - (loggedToday ? 1 : 0);
@@ -1689,12 +1477,6 @@
       els.todayCompare.hidden = true;
     }
 
-    // Days practised in a rolling 28-day window, deliberately NOT a
-    // consecutive-day streak. A streak that resets to zero punishes a single
-    // missed day, and the habit evidence says one miss costs almost nothing —
-    // while a broken streak hurts roughly four times as much as an intact one
-    // helps, and reliably drives people to abandon the tool outright.
-    // See docs/motivation-evidence.md.
     var WINDOW_DAYS = 28;
     var practisedInWindow = 0;
     var windowCursor = new Date();
@@ -1713,20 +1495,16 @@
     renderGarden(focusSessions);
   }
 
-  // ---------- hours logged per skill ----------
-  // Deliberately a ledger, not a progress-to-mastery bar. The marker is
-  // whatever the user typed, described as "your marker" rather than a
-  // threshold, and a session short of it is never rendered as a shortfall:
-  // rewards scaled to how far you fell short are the most demotivating
-  // arrangement in the whole reward literature, while a plain binary "reached"
-  // is close to harmless. See docs/motivation-evidence.md.
-  // Which skill's marker is open for editing — click-to-edit, the same idiom
-  // the task category chip and the log row already use, rather than parking a
-  // permanent number input on every row.
   var editingSkillName = null;
 
   function loadSkillMarks(){
     try{
+      var expiresAt = parseInt(localStorage.getItem(STORAGE_SKILL_MARKS_EXPIRES), 10);
+      if(expiresAt && expiresAt <= nowMs()){
+        localStorage.removeItem(STORAGE_SKILL_MARKS);
+        localStorage.removeItem(STORAGE_SKILL_MARKS_EXPIRES);
+        return {};
+      }
       var raw = localStorage.getItem(STORAGE_SKILL_MARKS);
       var obj = raw ? JSON.parse(raw) : {};
       return (obj && typeof obj === 'object' && !Array.isArray(obj)) ? obj : {};
@@ -1734,16 +1512,21 @@
   }
 
   function saveSkillMarks(obj){
-    try{ localStorage.setItem(STORAGE_SKILL_MARKS, JSON.stringify(obj)); }catch(e){ /* ignore */ }
+    try{
+      localStorage.setItem(STORAGE_SKILL_MARKS, JSON.stringify(obj));
+      localStorage.setItem(STORAGE_SKILL_MARKS_EXPIRES, String(nowMs() + SKILL_MARKS_CACHE_TTL_MS));
+    }catch(e){   }
     notifyLocalChange('skillMarks');
   }
 
-  // The lowest rung still ahead of you, never past the goal. Once every rung
-  // below the goal is behind you the goal itself becomes the target, so the
-  // ladder adapts to a goal of 600h as readily as one of 10,000h.
-  //
-  // Only ever consulted for a skill still on the default goal — see
-  // skillBarTarget below.
+  function clearSkillMarks(){
+    try{
+      localStorage.removeItem(STORAGE_SKILL_MARKS);
+      localStorage.removeItem(STORAGE_SKILL_MARKS_EXPIRES);
+    }catch(e){   }
+    refreshStats();
+  }
+
   function nextMilestone(hours, goal){
     for(var i = 0; i < SKILL_MILESTONES.length; i++){
       if(SKILL_MILESTONES[i] >= goal) break;
@@ -1752,25 +1535,6 @@
     return goal;
   }
 
-  // What the bar is measured against, which depends on whether the goal is
-  // one the user chose. The two cases answer genuinely different questions:
-  //
-  //   default goal   10,000h is the app's placeholder, not a target anybody
-  //                  picked, so measuring against it says nothing. The ladder
-  //                  supplies a near target instead and the bar always moves.
-  //                  Crossing a rung raises the denominator and the bar drops
-  //                  back — the ordinary level-up pattern.
-  //
-  //   chosen goal    Setting a number is itself the statement "this is my
-  //                  target", so the bar reports position against it, plainly
-  //                  and linearly. 10h of 300h is 3%.
-  //
-  // Two rejected alternatives, both of which broke one case to serve the other:
-  // measuring against the rung in *both* cases made the bar ignore the chosen
-  // goal entirely (45h read 90% whether the goal was 50h or 10,000h, so
-  // re-setting it appeared to do nothing); and a log scale, which responds to
-  // the goal but inflates early progress against a chosen one — 10h of 300h
-  // showed 42%, which is simply not where you are.
   function skillBarTarget(hours, goal, usingDefault){
     return usingDefault ? nextMilestone(hours, goal) : goal;
   }
@@ -1778,7 +1542,6 @@
   function skillBarPct(hours, target){
     if(hours <= 0 || target <= 0) return 0;
     if(hours >= target) return 100;
-    // Floor of 1 so any logged time shows a sliver rather than an empty track.
     return Math.min(100, Math.max(1, Math.round((hours / target) * 100)));
   }
 
@@ -1803,53 +1566,32 @@
       return;
     }
 
-    // The bar fills toward the row's own goal (or, on the default goal, toward
-    // the next rung — see skillBarTarget). It used to be sized against the
-    // largest skill, which meant the biggest one was permanently full and
-    // changing its goal did nothing — while the colour still flipped on
-    // reaching the goal, so length and colour meant two different things.
-    // Avoiding a goal-shaped bar was over-applying the reward research: the
-    // demotivating pattern there is a *reward* scaled to how far short you
-    // fell, not a self-set goal with nothing riding on it. Plain progress
-    // monitoring is the best-evidenced mechanism in that whole review.
     rows.forEach(function(r){
-      // A skill with no goal of its own falls back to the default, shown
-      // faint so it reads as a suggestion rather than something you chose.
       var usingDefault = !r.mark;
       var goal = r.mark || DEFAULT_SKILL_GOAL_HOURS;
       var hours = r.minutes / 60;
       var reached = hours >= goal;
       var target = skillBarTarget(hours, goal, usingDefault);
       var pct = skillBarPct(hours, target);
-      // The rung is only worth naming while it differs from the goal, which is
-      // exactly the default case; otherwise "next 300h · goal 300h" twice over.
-      var barTitle = formatDuration(r.minutes) +
-        (reached ? ' — goal reached' : (usingDefault ? ' · next ' + target + 'h' : '')) +
-        ' · goal ' + goal + 'h' + (usingDefault ? ' (default)' : '');
+      var targetLabel = (usingDefault ? 'Next milestone: ' : 'Goal: ') + target + 'h';
+      if(reached) targetLabel += ' ✓';
+      var barTitle = formatDuration(r.minutes) + ' · ' + targetLabel;
       var li = document.createElement('li');
-      // Reuses the category-legend row: same pill-inside-.cat-name structure,
-      // same bar, same mono figures, so this card reads as part of the app.
       li.className = 'cat-row skill-row';
 
-      // "goal" rather than "marker", and prefixed when set: two bare figures
-      // side by side gave no clue which was hours logged and which was the
-      // number being aimed at.
       var markCell = r.name === editingSkillName
         ? '<input type="number" class="inline-edit-input skill-mark-input" min="1" max="50000" ' +
-            'value="' + goal + '" placeholder="h" ' +
+            'value="' + escapeAttr(goal) + '" placeholder="h" ' +
             'aria-label="Hour goal for ' + escapeAttr(r.name) + '">'
         : '<button type="button" class="skill-mark-btn' + (usingDefault ? ' skill-mark-empty' : '') + '" ' +
-            'title="' + (usingDefault ? 'Default goal — click to set your own' : 'Change your hour goal') + '">' +
-            'goal ' + goal + 'h' + (reached ? ' ✓' : '') +
+            'aria-label="' + (usingDefault ? 'Set goal for ' : 'Edit goal for ') + escapeAttr(r.name) + '">' +
+            (usingDefault ? 'Set goal' : 'Edit goal') +
           '</button>';
 
       li.innerHTML =
-        // title so a name clipped by the fixed-width column is still readable.
         '<span class="cat-name"><span class="cat-pill ' + categoryColorClass(r.name) + '" title="' + escapeAttr(r.name) + '">' + escapeHtml(r.name) + '</span></span>' +
-        // div, not span: width and height do not apply to inline elements, so
-        // a span fill renders as a zero-size box and only the track shows.
-        '<div class="cat-bar-track" title="' + escapeAttr(barTitle) + '"><div class="cat-bar-fill ' + categoryColorClass(r.name) + (reached ? ' cat-bar-reached' : '') + '" style="width:' +
-          pct + '%"></div></div>' +
+        '<div class="skill-progress"><div class="cat-bar-track" title="' + escapeAttr(barTitle) + '"><div class="cat-bar-fill ' + categoryColorClass(r.name) + (reached ? ' cat-bar-reached' : '') + '" style="width:' +
+          pct + '%"></div></div><span class="skill-target">' + escapeHtml(targetLabel) + '</span></div>' +
         '<span class="cat-minutes">' + formatDuration(r.minutes) + '</span>' +
         '<span class="skill-mark-cell">' + markCell + '</span>';
 
@@ -1872,11 +1614,8 @@
     refreshStats();
   }
 
-  // ---------- yearly pomodoro heatmap (Jan 1 - Dec 31, current year) ----------
   var MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
-  // Fixed thresholds so the color scale stays comparable across the year,
-  // rather than rescaling to whatever the busiest day happened to be.
   function heatColorClass(count){
     if(count <= 0) return 'heat-0';
     if(count <= 2) return 'heat-1';
@@ -1887,7 +1626,7 @@
 
   function renderYearHeatmap(sessions){
     var year = heatmapViewYear;
-    var counts = {}; // dateKey -> completed pomodoro count
+    var counts = {};
     var yearTotal = 0;
     sessions.forEach(function(s){
       if(s.status === 'completed'){
@@ -1899,7 +1638,7 @@
     var jan1 = new Date(year, 0, 1);
     var dec31 = new Date(year, 11, 31);
     var gridStart = new Date(jan1);
-    gridStart.setDate(gridStart.getDate() - gridStart.getDay()); // back up to the Sunday on/before Jan 1
+    gridStart.setDate(gridStart.getDate() - gridStart.getDay());
 
     var totalDays = Math.round((dec31 - gridStart) / 86400000) + 1;
     var totalWeeks = Math.ceil(totalDays / 7);
@@ -1943,51 +1682,8 @@
     }
   }
 
-  // ---------- garden ----------
-  // A place you build, not a log you scroll.
-  //
-  // The version this replaced grew one plant per day worked and stacked the
-  // days into rows forever. It failed for a reason worth writing down: the
-  // content ceiling was reached in about six weeks (five stages times six
-  // species is thirty drawings) while the quantity grew without limit, so a
-  // year of use meant 365 plants over 37 rows in which row 12 and row 31 were
-  // indistinguishable. Quantity without novelty is wallpaper.
-  //
-  // So the loop now is: finishing a pomodoro earns a token, tokens buy plants and
-  // ornaments from a shop, and you choose where each one goes on a fixed plot.
-  // The plot is bounded, so a year fills a garden rather than extending a list,
-  // and what you get out of a long streak is a place that looks like yours.
-  //
-  // Three rules held over from docs/motivation-evidence.md, and one new one:
-  //
-  //  - Tokens never expire, never decay, and nothing charges upkeep. Every token
-  //    you earn stays earned.
-  //  - Nothing wilts and nothing dies from neglect. A plant with no work behind
-  //    it simply waits at the stage it reached.
-  //  - The shop shows prices, never a shortfall: an item you cannot afford yet
-  //    is dimmed and priced, and no text anywhere says how far short you are.
-  //    A reward rendered as the gap you failed to close is the worst design in
-  //    the reward literature (free-choice d=-0.80 to -0.88); a price you can
-  //    save toward is a menu, which is a different thing.
-  //  - The seed count lives here in Statistics and never appears beside the
-  //    timer. Visual prominence alone flips a reward signal's sign (salient
-  //    d=-0.78 vs non-salient d=+0.24).
   var STORAGE_GARDEN = 'pomodoroBench.garden.v1';
   var GARDEN_COLS = 10;
-  // Tiers climb, they do not run out. The garden always keeps empty tiers above
-  // Land is sold by the PARCEL, not by the plot: one parcel is ten plots, five
-  // across and two deep, and parcels sit apart with a path between them. That
-  // spacing is the point — an unbroken sea of identical plots reads as shelving,
-  // while parcels separated by paths read as a farm.
-  //
-  // The first four parcels are free, which is the same forty plots the version
-  // before this gave away: shrinking that would take land off people already
-  // using the app, and grandfathering only rescues plots with something PLANTED
-  // on them, not the empty ones somebody was keeping for later.
-  //
-  // Land exists as a purchase because tokens had exactly one sink — the shop —
-  // and one of everything costs a few hundred. After that there was nothing left
-  // to aim for. Land never runs out of things to want.
   var PARCEL_COLS = 5;
   var PARCEL_ROWS = 2;
   var PARCEL_SLOTS = PARCEL_COLS * PARCEL_ROWS;
@@ -2007,17 +1703,11 @@
     };
   }
 
-  // Linear rather than exponential: the farm should keep growing all year
-  // instead of stalling at the sixth parcel.
   function parcelPrice(index){
     if(index < PARCELS_FREE) return 0;
     return 24 + 16 * (index - PARCELS_FREE + 1);
   }
 
-  // How many parcels are owned. Stored, but a garden saved before land could be
-  // bought has no such number — so anything already planted is GRANDFATHERED in.
-  // Charging retroactively for land somebody already used, or hiding their plants
-  // behind land they now have to buy, would both be theft.
   function parcelsOwned(g){
     var least = PARCELS_FREE;
     for(var i = 0; i < g.items.length; i++){
@@ -2025,38 +1715,18 @@
       if(at > least) least = at;
     }
     var stored = typeof g.parcels === 'number' && g.parcels > 0 ? Math.floor(g.parcels) : 0;
-    // Gardens saved by the short-lived version that sold single plots carry a
-    // `plots` count instead. Round UP, so nobody loses part of a parcel.
     if(!stored && typeof g.plots === 'number' && g.plots > 0){
       stored = Math.ceil(g.plots / PARCEL_SLOTS);
     }
     return Math.min(PARCELS_MAX, Math.max(least, stored));
   }
 
-  // Parcels to draw: every owned one, plus the next one up for sale, so the edge
-  // of the farm is always visible and there is always somewhere to grow.
   function parcelCount(owned){
     return Math.min(PARCELS_MAX, owned + 1);
   }
 
-  // What a parcel is FOR follows what is in it, so there is no extra choice to
-  // make and no extra field to store. Ornaments belong anywhere, which is why
-  // they claim nothing.
-  //
-  // Livestock commits a parcel to its own kind, because each kind is housed
-  // differently: chickens get a coop, pigs a sty, cows a barn. One shed that has
-  // to serve a cow and a chicken at once is a shed that reads as neither.
-  //
-  // Two exceptions, both because of what the place actually looks like. Pets —
-  // the dog and the cat — share a yard, since a kennel and a cat house stand in
-  // the same corner of a real garden. And a pond holds a mixed shoal, which is
-  // what a pond looks like.
   var PETS = { dog:1, cat:1 };
 
-  // Which pen a kind is housed in when it is not its own. A barn holds hoofed
-  // stock and a coop holds birds, both of which are true of real farms — and the
-  // alternative was three more sheds, when the whole point of keeping the pens
-  // small was that a row of buildings reads as a warehouse yard.
   var PEN_SHARE = { sheep:'cow', goat:'cow', duck:'chicken' };
   var FAMILY_BY_CAT = {
     flower:'bed', crop:'bed', tree:'bed', special:'bed', fish:'pond'
@@ -2071,9 +1741,6 @@
     return FAMILY_BY_CAT[meta.cat] || null;
   }
 
-  // The family a parcel has already committed to, or null while it is empty. A
-  // pond full of fish, a coop full of chickens and a bed full of grapes are what
-  // the game should look like; a cow standing among the tomatoes is not.
   function parcelFamily(items, index){
     for(var i = 0; i < items.length; i++){
       if(parcelOf(items[i].row, items[i].col) !== index) continue;
@@ -2083,15 +1750,7 @@
     return null;
   }
 
-  // Plants grow with the work done since they were planted, not with wall-clock
-  // time. Waiting never advances a plant, and a plant never falls behind for
-  // time off — it just holds where it is until the next session.
-  // Read these as fractions of the way to full growth rather than as pomodoro
-  // counts: every shop item carries its own `mature`, and the steps are
-  // stretched to fit it. One shared schedule would mean the dearest crop ripens
-  // as fast as the cheapest, which is exactly the runaway income this table
-  // exists to prevent.
-  var GROWTH_STEPS = [0, 2, 4, 7, 12];   // stage 1..5, against MATURE_DEFAULT
+  var GROWTH_STEPS = [0, 2, 4, 7, 12];
   var MATURE_DEFAULT = 12;
 
   function plantStageForAge(age, mature){
@@ -2103,7 +1762,6 @@
     return stage;
   }
 
-  // Pomodoros from planting to the last stage — and, for an annual, to harvest.
   function matureOf(meta){ return (meta && meta.mature) || MATURE_DEFAULT; }
 
   function hashString(s){
@@ -2112,10 +1770,6 @@
     return h;
   }
 
-  // The murmur3 finaliser. FNV on its own leaves the low bits badly clustered,
-  // so anything that takes `hash % n` off it lands on a handful of values — that
-  // is how three of six foliage palettes ended up never being drawn. Running the
-  // result through this first spreads it, and it costs four instructions.
   function mix32(h){
     h ^= h >>> 16;
     h = (Math.imul(h, 2246822507)) >>> 0;
@@ -2125,21 +1779,6 @@
     return h >>> 0;
   }
 
-  // ---- the shop ----
-  // Prices climb with how much drawing a species has in it, so the things that
-  // look most like a reward take the longest to reach. Ornaments do not grow,
-  // which is the point of them: they are the part of the garden that is purely
-  // yours to arrange.
-  // What a harvest is worth, and why ripening is counted in pomodoros rather
-  // than in hours.
-  //
-  // Ripening on wall-clock time would mean the app pays you for leaving it
-  // open, which severs the one link that makes this whole tab legitimate:
-  // a token is a finished pomodoro. Counted in pomodoros instead, a plant is a
-  // MULTIPLIER on work rather than a way around it — an expensive tree makes
-  // each session worth more, and a garden nobody works in produces nothing at
-  // all. Same reason nothing here decays: an idle garden should be still, not
-  // punished.
   var PRODUCE = {
     petal:  { label:'Petals',      value:5 },
     cherry: { label:'Cherries',    value:3 },
@@ -2152,9 +1791,6 @@
     milk:   { label:'Milk',        value:6 },
     fish:   { label:'Fish',        value:7 },
 
-    // Livestock and the pond. `value / every` IS the rate an animal pays, so
-    // `every` is the number that keeps each of these honest, not the purchase
-    // price — the price only decides how long it takes to pay for itself.
     wool:      { label:'Wool',      value:12 },
     cheese:    { label:'Cheese',    value:9 },
     pork:      { label:'Pork',      value:16 },
@@ -2164,9 +1800,6 @@
     catfish:   { label:'Catfish',   value:7 },
     lobster:   { label:'Lobster',   value:20 },
 
-    // Farm produce. `value` is the sale price; for an annual it is set so one
-    // harvest returns about 1.4x what the seed cost, and that premium is the
-    // whole return on the pomodoros spent waiting.
     grain:        { label:'Rice',           value:3 },
     carrot:       { label:'Carrots',        value:6 },
     tomato:       { label:'Tomatoes',       value:8 },
@@ -2188,10 +1821,6 @@
     apple:        { label:'Apples',         value:9 }
   };
 
-  // price = what it costs · every = pomodoros between harvests · produce = what
-  // it drops. Payback sits between roughly 12 and 60 pomodoros across the
-  // range, and the cheap end pays back fastest, so the first thing a new garden
-  // can afford is also the thing that gets it moving.
   var SHOP_ITEMS = [
     { kind:'sunflower', name:'Sunflower', price:3,  species:'sunflower', palette:3, grows:true, every:1, produce:'petal', cat:'flower', annual:true },
     { kind:'sakura',    name:'Cherry',    price:8,  species:'sakura',    palette:5, grows:true, mature:18, every:20, produce:'cherry', cat:'tree' },
@@ -2200,47 +1829,21 @@
     { kind:'birch',     name:'Birch',     price:20, species:'birch',     palette:1, grows:true, mature:30, every:32, produce:'bark', cat:'tree' },
     { kind:'maple',     name:'Maple',     price:24, species:'maple',     palette:4, grows:true, mature:34, every:36, produce:'syrup', cat:'tree' },
     { kind:'cypress',   name:'Cypress',   price:28, species:'cypress',   palette:0, grows:true, mature:38, every:40, produce:'cone', cat:'tree' },
-    // Companions, deliberately with nothing to harvest. A dog that produced a
-    // farm good would be nonsense, and the honest alternative — making them
-    // need feeding so there is something to fail at — is the punishment
-    // mechanic this card refuses. They are here to move about and be alive.
-    // `mature` on livestock is how long it takes to grow up, in pomodoros, and
-    // it is the same number the crops use. A small animal grows up fast and a cow
-    // takes a while; nothing produces before it is full grown. The long-run rate
-    // is untouched, because a perennial goes on yielding — what maturity costs is
-    // the first cycle, which is exactly what raising an animal should cost.
     { kind:'cat',       name:'Cat',       price:26, decor:'cat',      grows:false, mature:8,  cat:'animal' },
     { kind:'dog',       name:'Dog',       price:30, decor:'dog',      grows:false, mature:10, cat:'animal' },
     { kind:'chicken',   name:'Chicken',   price:18, decor:'chicken',  grows:false, mature:10, every:18, produce:'egg', cat:'animal' },
     { kind:'cow',       name:'Cow',       price:34, decor:'cow',      grows:false, mature:20, every:30, produce:'milk', cat:'animal' },
-    // There is no "pond" to buy. A pond is LAND — you open a parcel and it
-    // becomes one the moment a fish goes in it, the same way a parcel becomes a
-    // bed or a pen. Selling a pond off a shelf beside the livestock made it a
-    // thing rather than a place, and it drew a whole miniature pond inside one
-    // plot, which is why every real fish in the water stood in a pale saucer.
-    //
-    // Anything already planted keeps its data: loadGarden holds on to items
-    // whose kind has left the shop rather than deleting them.
     { kind:'duck',      name:'Duck',      price:22, decor:'duck',     grows:false, mature:10, every:16, produce:'egg',   cat:'animal' },
     { kind:'goat',      name:'Goat',      price:36, decor:'goat',     grows:false, mature:14, every:42, produce:'cheese', cat:'animal' },
     { kind:'sheep',     name:'Sheep',     price:40, decor:'sheep',    grows:false, mature:16, every:60, produce:'wool',  cat:'animal' },
     { kind:'pig',       name:'Pig',       price:44, decor:'pig',      grows:false, mature:18, every:80, produce:'pork',  cat:'animal' },
 
-    // Fish. Bought as stock and kept in a pond, which is why none of them is a
-    // "pond": the pond is the land, and land is opened rather than bought from a
-    // shelf. Every one of them still has to grow before it is worth anything.
     { kind:'tilapia',   name:'Tilapia',   price:20, decor:'tilapia',  grows:false, mature:10, every:30, produce:'tilapia',   cat:'fish' },
     { kind:'catfish',   name:'Catfish',   price:24, decor:'catfish',  grows:false, mature:12, every:36, produce:'catfish',   cat:'fish' },
     { kind:'carp',      name:'Carp',      price:26, decor:'carp',     grows:false, mature:12, every:40, produce:'carpfish',  cat:'fish' },
     { kind:'snakehead', name:'Snakehead', price:30, decor:'snakehead',grows:false, mature:14, every:44, produce:'snakehead', cat:'fish' },
     { kind:'lobster',   name:'Lobster',   price:56, decor:'lobster',  grows:false, mature:20, every:90, produce:'lobster',   cat:'fish' },
 
-    // The farm roster. `mature` is what keeps this honest: a crop that costs
-    // more takes proportionally longer to reach harvest, so every row here
-    // clears between 0.08 and 0.22 tokens per pomodoro and none of them is the
-    // obvious play. An `annual` is lifted with its harvest and has to be bought
-    // again; the perennials keep bearing, which is why their rate sits in the
-    // lower half of that band.
     { kind:'rice',         name:'Rice',            price:2,  species:'rice',          palette:3, grows:true, mature:12, every:1,  produce:'grain',         cat:'crop', annual:true },
     { kind:'carrot',       name:'Carrot',          price:4,  species:'carrot',        palette:3, grows:true, mature:12, every:1,  produce:'carrot',        cat:'crop', annual:true },
     { kind:'tomato',       name:'Tomato',          price:6,  species:'tomato',        palette:4, grows:true, mature:13, every:1,  produce:'tomato',        cat:'crop', annual:true },
@@ -2262,15 +1865,10 @@
     { kind:'apple',        name:'Apple',           price:46, species:'apple',         palette:4, grows:true, mature:32, every:46, produce:'apple',         cat:'tree' }
   ];
 
-  // What the plot under a thing is made of. Soil is for anything that grows in
-  // it; everything else was standing on a vegetable bed, which is why a cow read
-  // as livestock loose in the crops and the fish pond read as a puddle in a
-  // flowerbed. The grid, the click and the save format are unchanged — only the
-  // ground stops lying about what is on it.
   var GROUND_BY_CAT = {
-    animal: 'yard',    // trodden grass, the corner of a garden animals are kept in
-    fish:   'water',   // the pond is the plot, not something sitting on top of one
-    decor:  'path'     // a bench belongs on paving, not on a seed bed
+    animal: 'yard',
+    fish:   'water',
+    decor:  'path'
   };
 
   function groundFor(meta){
@@ -2284,7 +1882,6 @@
     return null;
   }
 
-  // ---- storage ----
   function loadGarden(){
     var g = { spent: 0, income: 0, basket: {}, items: [], parcels: 0 };
     try{
@@ -2293,12 +1890,7 @@
         var saved = JSON.parse(raw);
         if(saved && typeof saved === 'object'){
           if(typeof saved.spent === 'number' && saved.spent >= 0) g.spent = saved.spent;
-          // Seeds earned by selling produce. Kept separately from `spent` so the
-          // balance stays a plain sum and can never be reconstructed wrongly.
           if(typeof saved.income === 'number' && saved.income >= 0) g.income = saved.income;
-          // Parcels bought. Zero means "not recorded", not "no land":
-          // parcelsOwned() floors it at the free parcels and at whatever is
-          // already planted, and migrates the older per-plot count.
           if(typeof saved.parcels === 'number' && saved.parcels > 0) g.parcels = Math.floor(saved.parcels);
           if(typeof saved.plots === 'number' && saved.plots > 0) g.plots = Math.floor(saved.plots);
           if(saved.basket && typeof saved.basket === 'object'){
@@ -2308,11 +1900,6 @@
             });
           }
           if(Array.isArray(saved.items)){
-            // Position is validated, but an unrecognised `kind` is KEPT. Dropping
-            // it here would mean that commenting one row out of SHOP_ITEMS
-            // silently erases every planted copy from every saved garden — an
-            // edit to a price table must never destroy what someone built.
-            // Anything unknown is simply not drawn; see renderPlot.
             g.items = saved.items.filter(function(it){
               return it && typeof it.kind === 'string' &&
                 it.col >= 0 && it.col < GARDEN_COLS && it.row >= 0 && it.row < GARDEN_MAX_ROWS;
@@ -2320,15 +1907,14 @@
           }
         }
       }
-    }catch(e){ /* ignore corrupt storage */ }
+    }catch(e){   }
     return g;
   }
 
   function saveGarden(g){
-    try{ localStorage.setItem(STORAGE_GARDEN, JSON.stringify(g)); }catch(e){ /* storage unavailable */ }
+    try{ localStorage.setItem(STORAGE_GARDEN, JSON.stringify(g)); }catch(e){   }
   }
 
-  // ---- drawing ----
   var PLANT_BASE_X = 30, PLANT_BASE_Y = 96;
 
   var SPROUT_PARTS = [
@@ -2337,22 +1923,6 @@
     { d:'M30 75 Q41.5 73 44.8 63 Q33.2 63.5 30 72.8 Z', tone:'light' }
   ];
 
-  // Parts paint in array order (back to front); each appears from a given stage
-  // onward, and `to` lets a stage replace a shape rather than accumulate over
-  // it. Stage 2 is never simply the mature drawing shrunk: a scaled-down tree
-  // keeps its trunk-to-crown ratio, which is the lollipop this card started out
-  // looking like, so every species has a stage-2 crown that sits low and wide
-  // over a short trunk — the shape a young plant actually has.
-  // Every species, redrawn. Two things drive all of it:
-  //
-  // The sun is in the UPPER LEFT, for every leaf, petal, fruit and trunk. Each
-  // rounded mass is painted shade-at-full-size, then the body inset away from the
-  // sun, then the highlight further along, so the `deep` tone always survives as
-  // a rim on the lower right. No part chooses its own tone by hand.
-  //
-  // And the silhouette has to carry the species on its own. These are read at
-  // about 46px wide in a plot, where colour is nearly all that survives of a
-  // detail — so the shape is what has to say "tomato" rather than "red bush".
   var SPECIES = {
     oak: {
       trunk: 'M 25.4 96 Q 27.7 78 26.8 60 L 33.2 60 Q 32.3 78 34.6 96 Z',
@@ -5235,16 +4805,6 @@
     }
   };
 
-  // Ornaments are single drawings — they never grow, which is exactly their job.
-  // Animals, fish and the two pets, each with a JUVENILE and an ADULT drawing.
-  // Two drawings rather than one scaled down, because a piglet is not a small
-  // pig: the head is proportionally larger, the legs shorter, the tusks absent.
-  // Scale alone gives a squashed adult.
-  //
-  // Every land animal and every fish faces RIGHT and is centred on x = 30, so
-  // the movement code can mirror with scaleX(-1) without the body jumping
-  // sideways. The contact shadow is deliberately offset right of that centre and
-  // must not be counted as part of the silhouette.
   var DECOR = {
     duck: {
       young: [
@@ -5404,8 +4964,6 @@
   var STAGE_SCALE = [0, 1, 0.92, 0.84, 1, 1];
   var STAGE_SHADOW_RX = [0, 7, 10, 11.5, 13, 13];
 
-  // A ring of petals, generated rather than written out: twelve hand-authored
-  // ellipse elements per flower per stage would be unmaintainable.
   function petalRing(spec, tone){
     var cx = spec[0], cy = spec[1], n = spec[2], rx = spec[3], ry = spec[4], dist = spec[5];
     var out = '';
@@ -5418,9 +4976,6 @@
   }
 
   function svgPart(part){
-    // A raw fragment, for the few things that need their own group so CSS can
-    // animate a part independently of the rest of the drawing — a fish inside a
-    // pond, a dog's legs, a cat's tail.
     if(part.raw) return part.raw;
     if(part.petals) return petalRing(part.petals, part.tone);
     if(part.c){
@@ -5433,9 +4988,6 @@
   function drawPlant(speciesKey, stage, blossoms, seed, flat){
     var spec = SPECIES[speciesKey] || SPECIES.oak;
     var h = hashString(seed);
-    // `flat` is for the shop, where items side by side have to be comparable —
-    // the wobble that makes a real bed look natural would read there as the
-    // drawings being inconsistent.
     var rot = flat ? '0' : (((h % 11) - 5) * 0.5).toFixed(2);
     var wobble = flat ? 1 : 1 + ((((h >> 4) % 9) - 4) * 0.014);
     var flip = (!flat && ((h >> 9) % 2)) ? -1 : 1;
@@ -5461,27 +5013,12 @@
     return wrapSvg(body, STAGE_SHADOW_RX[stage], rot, scale * flip, scale);
   }
 
-  // Where a producing animal shows what is waiting to be collected. Two tidy
-  // RANKS above the animal rather than a scatter, and ordered from the CENTRE
-  // OUTWARD: at plot size nine loose dots read as insects circling the animal.
-  // With one unit waiting the marker sits over the animal and with two they
-  // straddle it; filling left to right instead put a pair off to one side, where
-  // two pale discs side by side read as a pair of eyes floating above it.
   var DECOR_YIELD_SPOTS = [[30,57],[24,57],[36,57],[18,57],[42,57],
                            [27,48],[33,48],[21,48],[39,48]];
-  // A fish needs its own list. A hen tops out around y=63 and the list above
-  // clears it; a fish hangs on y=66 and reaches up to about y=51, so the lower
-  // rank landed ON the dorsal edge and read as a rash.
   var DECOR_FISH_YIELD_SPOTS = [[30,41],[24,41],[36,41],[18,41],[42,41],
                                 [27,32],[33,32],[21,32],[39,32]];
   var DECOR_IS_FISH = { snakehead:1, carp:1, tilapia:1, catfish:1, lobster:1, pond:1 };
 
-  // One marker: a produce nugget with a catchlight on its upper left, so it is
-  // lit from the same direction as everything else on the farm, sitting on a soft
-  // warm glow. It replaces a bare 2.2-unit orange circle, which at plot size was
-  // a dot — and a scatter of dots above an animal reads as flies, not a harvest.
-  // The glow is deliberately faint: at a high alpha a pale disc with a warm dot
-  // in the middle of it is an eyeball, and two of those are a face.
   function yieldMark(x, y){
     return '<circle class="t-s-badge" cx="' + x + '" cy="' + y + '" r="4"/>' +
       '<path class="t-yield" d="M' + x + ' ' + (y - 3.5) + ' q2.6 1.95 2.6 4.15 ' +
@@ -5491,14 +5028,6 @@
         (y - 0.9) + ')"/>';
   }
 
-  // Two drawings per species where there are two: the juvenile and the adult.
-  // A flat array is a species that only has the one, and it grows by size alone
-  // until its young drawing exists.
-  //
-  // The reason for a second drawing rather than just a smaller one: a piglet is
-  // not a pig scaled down. The head is proportionally larger, the legs are
-  // shorter, there are no tusks. Scale alone produces a squashed adult, which is
-  // exactly what looked wrong.
   function decorParts(decorKey, stage){
     var d = DECOR[decorKey];
     if(!d) return [];
@@ -5507,25 +5036,13 @@
     return d.adult || d.young || [];
   }
 
-  // Full size at stage 5. Deliberately not linear: most of the change lands in
-  // the first two steps, because that is where growing up is visible. The last
-  // step is small so a nearly grown animal does not visibly pop.
-  //
-  // Indexed from 2, not from 0. Stage 1 for a plant is bare soil with nothing
-  // showing yet, which is right for a seed and meaningless for an animal: money
-  // was spent on a creature, so there has to be a creature standing there. Every
-  // animal therefore starts at stage 2, and this table has no entry below it.
   var STOCK_SCALE = { 2: 0.56, 3: 0.72, 4: 0.88, 5: 1 };
 
-  // The one place an animal decides how grown up it is, so the drawing, the
-  // wording and the maturity gate cannot disagree with each other.
   function stockStageOf(meta, item, earned){
     if(!meta || !meta.mature) return 5;
     return Math.max(2, plantStageForAge(plantAgeIn(item, earned), matureOf(meta)));
   }
 
-  // Where a producing animal shows what is waiting. Kept off the body for a
-  // young one: there is nothing to collect from it, so it never gets markers.
   function drawDecor(decorKey, fruit, stage){
     if(stage == null) stage = 5;
     var parts = decorParts(decorKey, stage);
@@ -5535,21 +5052,11 @@
     for(var f = 0; f < (fruit || 0) && f < spots.length; f++){
       body += yieldMark(spots[f][0], spots[f][1]);
     }
-    // Not `STOCK_SCALE[stage] || 1`: the table used to run from index 0, so a
-    // stage whose entry was 0 fell through the `||` and drew at FULL SIZE. A
-    // newborn animal came out the size of an adult, which is the whole thing
-    // this stage ramp exists to prevent.
     var k = STOCK_SCALE[stage];
     if(!(k > 0)) k = 1;
     return wrapSvg(body, 13 * k, '0', k, k);
   }
 
-  // The drawings only span about 57% of the 60-unit box (roughly x 13..47), so at
-  // the size the bed gives them they came out visibly smaller than the plot they
-  // stand in. This scales every drawing up about its base so it fills the tile
-  // properly, without changing the footprint a slot reserves — the svg is
-  // overflow:visible, so a full-grown cypress simply leans a little into the
-  // sky above its own tier.
   var ART_SCALE = 1.34;
 
   function wrapSvg(body, shadowRx, rot, scaleX, scaleY){
@@ -5558,11 +5065,6 @@
     shadowRx = shadowRx * ART_SCALE;
     return '<svg class="plant-svg" viewBox="0 0 60 96" width="46" height="74" aria-hidden="true" focusable="false">' +
       '<ellipse class="t-shadow" cx="' + PLANT_BASE_X + '" cy="94.6" rx="' + shadowRx + '" ry="2.4"/>' +
-      // Two nested groups on purpose. The sway animation sets a CSS `transform`,
-      // and a CSS transform REPLACES the SVG transform attribute outright rather
-      // than composing with it — animating the inner group directly silently
-      // threw away its stage scale, so a swaying plant drew at full size
-      // whatever stage it was on. The outer group exists for the animation.
       '<g class="plant-sway">' +
         '<g class="plant-body" transform="translate(' + PLANT_BASE_X + ' ' + PLANT_BASE_Y +
           ') rotate(' + rot + ') scale(' + scaleX.toFixed(3) + ' ' + scaleY.toFixed(3) +
@@ -5576,22 +5078,12 @@
                       : drawDecor(item.decor, 0);
   }
 
-  // ---- state the view needs ----
-  // What the pointer is currently holding: a bought item waiting for a slot, or
-  // a planted item picked up to be moved. Not persisted — an armed cursor is
-  // not something to restore a day later.
-  var gardenHeld = null;   // {type:'buy', kind} | {type:'move', id}
+  var gardenHeld = null;
 
-  // The stored fields are still named plantedSeeds / harvestedSeeds. The
-  // currency was renamed to "token" in the interface only; renaming the
-  // persisted keys would need a migration for every garden already saved and
-  // buys nothing.
   function gardenSeedTotals(focusSessions){
     var earned = 0;
     focusSessions.forEach(function(s){ if(s.status === 'completed') earned += 1; });
     var g = loadGarden();
-    // Clamped: resetting statistics drops the earned total, and a negative
-    // balance must never appear.
     return {
       earned: earned,
       spent: g.spent,
@@ -5605,14 +5097,8 @@
     return Math.max(0, earned - (item.plantedSeeds || 0));
   }
 
-  // Ripeness is counted from the last harvest, in pomodoros. A grower has to be
-  // fully grown first; an animal produces from the day it arrives.
   function itemRipe(item, meta, earned){
     if(!meta.every || !meta.produce) return false;
-    // Keyed on `mature` rather than on `grows`, so it covers livestock as well.
-    // It used to read `meta.grows`, which meant only plants had to grow up and
-    // an animal produced from the moment it was bought — a calf giving milk is a
-    // calf that was never raised, and it was also the cheapest rate on the farm.
     if(meta.mature && plantStageForAge(plantAgeIn(item, earned), matureOf(meta)) < 5){
       return false;
     }
@@ -5620,24 +5106,14 @@
     return since >= meta.every;
   }
 
-  // How much fruit a ripe thing is carrying — and it is exactly what
-  // harvesting will credit, so the drawing never promises more than it gives.
-  // One unit per full cycle waited, capped: leaving something unpicked banks up
-  // to nine cycles and no further, which is what stops the plot being a place
-  // to hoard rather than tend. It is never a fraction of a target: unripe
-  // simply draws none.
   function ripeFruitCount(item, meta, earned){
     if(!itemRipe(item, meta, earned)) return 0;
-    // An annual is harvested once and taken with the crop, so it carries a
-    // single unit however long it stands.
     if(meta.annual) return 1;
     var since = earned - (item.harvestedSeeds == null ? (item.plantedSeeds || 0) : item.harvestedSeeds);
     return Math.max(1, Math.min(9, Math.floor(since / meta.every)));
   }
 
   var STAGE_WORDS = ['', 'a seedling', 'a sapling', 'a young plant', 'a full plant', 'in bloom'];
-  // Said of an animal, not of a plant. "A seedling cow" is the sort of thing
-  // that happens when one list is made to serve two kinds of living thing.
   var STOCK_WORDS = ['', '', 'newborn', 'growing', 'nearly grown', 'full grown'];
 
   function buildGardenItem(item, earned){
@@ -5652,18 +5128,12 @@
       var age = plantAgeIn(item, earned);
       var stage = plantStageForAge(age, matureOf(meta));
       el.setAttribute('data-stage', String(stage));
-      // Anything not yet at its last stage is still visibly on its way, so it is
-      // the thing that moves. Nothing here is ever the plant that failed.
       if(stage < 5) el.className += ' plant-growing';
       el.innerHTML = drawPlant(meta.species, stage, ripeFruitCount(item, meta, earned), item.id);
       el.title = meta.name + ' · ' + STAGE_WORDS[stage] + ' · ' +
         age + (age === 1 ? ' pomodoro' : ' pomodoros') + ' since planting' +
         (ripe ? ' · ' + produce.label.toLowerCase() + ' ready — press to harvest' : '');
     } else {
-      // Livestock has stages as well now. `plant-growing` is deliberately NOT
-      // applied: that class sways the sprite, and a swaying cow is a cow in a
-      // gale. Growing up here is size and shape, not motion — the animal has its
-      // own walk for that.
       var stockStage = stockStageOf(meta, item, earned);
       el.setAttribute('data-stage', String(stockStage));
       if(stockStage < 5) el.className += ' stock-young';
@@ -5676,15 +5146,6 @@
     return el;
   }
 
-  // The shop is grouped, not a flat strip: with crops, fruit trees, flowers,
-  // livestock, fish and ornaments all on one shelf, a single row stops being
-  // browsable. Cheapest groups come first, so what a new garden can actually
-  // reach is what it meets first.
-  // Ornaments (a pot, a fence, a lantern, a bench) are deliberately absent for
-  // now: land is divided into working parcels — beds, pens and ponds — and an
-  // ornament taking up a plot in a bed is a plot that grows nothing. They come
-  // back when there is somewhere for them to stand. Anything already planted
-  // stays in storage untouched; see the note in loadGarden.
   var SHOP_CATS = [
     { key:'flower',  label:'Flowers' },
     { key:'crop',    label:'Vegetables & spices' },
@@ -5700,16 +5161,12 @@
     var html = '';
     for(var c = 0; c < SHOP_CATS.length; c++){
       var group = SHOP_ITEMS.filter(function(it){ return (it.cat || 'decor') === SHOP_CATS[c].key; });
-      // A category whose art does not exist yet simply does not appear.
       if(group.length === 0) continue;
       html += '<div class="shop-group"><h3 class="shop-group-label">' + SHOP_CATS[c].label +
         '</h3><div class="shop-group-items">';
       for(var i = 0; i < group.length; i++){
         var item = group[i];
         var affordable = totals.available >= item.price;
-        // Unaffordable items are dimmed and still priced. What is deliberately
-        // absent is any "you need N more" — see the note at the top of this
-        // section on why a shortfall is never rendered anywhere in this card.
         html += '<button type="button" class="shop-item' +
           (held === item.kind ? ' shop-item-held' : '') +
           (affordable ? '' : ' shop-item-locked') +
@@ -5728,45 +5185,25 @@
     els.gardenShop.innerHTML = html;
   }
 
-  // One building per pen, standing at its edge the way a coop or a barn sits at
-  // the edge of a yard. These are drawn from a wider, shallower box than a plant
-  // (a building is wide and low, a plant is narrow and tall) and they are scenery
-  // rather than stock: nothing is bought, harvested or grown here.
   var HOUSES = {
     chicken: {
       label: 'Chicken coop',
-      // A coop reads by the pitched roof over a small square box with a pop-hole
-      // and a ramp. Nesting-box lid on the side is what stops it being a shed.
       art: '<ellipse class="t-s-shade s-soft" cx="24.74" cy="50.6" rx="17" ry="3.23"/><ellipse class="t-s-shade s-soft" cx="26.1" cy="51" rx="10.2" ry="2.21"/><g class="stock-ink"><path class="t-s-plank-deep s-soft" d="M32 33 L45 33 L45 41 L32 41 Z"/><path class="t-s-beam s-soft" d="M30 32 L38.5 26 L47 32 Z"/><path class="t-s-plank s-soft" d="M6 30 L34 30 L34 46 L6 46 Z"/><path class="t-s-plank-lit s-soft" d="M6 30 L20 30 L20 46 L6 46 Z"/><path class="t-s-plank-deep s-soft" d="M6 44.4 L34 44.4 L34 46 L6 46 Z"/><path class="t-s-plank-deep s-soft" d="M19.2 30 L20.8 30 L20.8 46 L19.2 46 Z"/><path class="t-s-roof s-soft" d="M2 31 L20 18 L38 31 Z"/><path class="t-s-roof-lit s-soft" d="M2 31 L20 18 L20 31 Z"/><path class="t-s-roof-deep s-soft" d="M2 31 L38 31 L38 33.4 L2 33.4 Z"/><path class="t-s-beam s-soft" d="M14 36 L24 36 L24 44.4 L14 44.4 Z"/><path class="t-s-ink-soft s-soft" d="M15.4 37.4 L22.6 37.4 L22.6 44.4 L15.4 44.4 Z"/><path class="t-s-plank s-soft" d="M15 46 L27 46 L31 51 L19 51 Z"/><path class="t-s-plank-lit s-soft" d="M15 46 L21 46 L25 51 L19 51 Z"/></g><ellipse class="t-s-comb s-soft" cx="19" cy="25.6" rx="1.8" ry="1.8"/><ellipse class="t-s-comb-lit s-soft" cx="18.4" cy="25" rx="0.8" ry="0.8"/>'
     },
     cow: {
       label: 'Cow barn',
-      // The biggest building of the set, because a barn that is not obviously the
-      // biggest reads as another shed. Big double door, hayloft opening above it.
       art: '<ellipse class="t-s-shade s-soft" cx="28.84" cy="50.6" rx="22" ry="4.18"/><ellipse class="t-s-shade s-soft" cx="30.6" cy="51" rx="13.2" ry="2.86"/><g class="stock-ink"><path class="t-s-plank s-soft" d="M2 26 L46 26 L46 50.6 L2 50.6 Z"/><path class="t-s-plank-lit s-soft" d="M2 26 L23 26 L23 50.6 L2 50.6 Z"/><path class="t-s-plank-deep s-soft" d="M2 49 L46 49 L46 50.6 L2 50.6 Z"/><path class="t-s-roof s-soft" d="M0 27 L24 10 L48 27 Z"/><path class="t-s-roof-lit s-soft" d="M0 27 L24 10 L24 27 Z"/><path class="t-s-roof-deep s-soft" d="M0 27 L48 27 L48 29.6 L0 29.6 Z"/><path class="t-s-beam s-soft" d="M15 33 L33 33 L33 50.6 L15 50.6 Z"/><path class="t-s-plank-deep s-soft" d="M16.6 34.6 L23 34.6 L23 50.6 L16.6 50.6 Z"/><path class="t-s-plank-deep s-soft" d="M25 34.6 L31.4 34.6 L31.4 50.6 L25 50.6 Z"/><path class="t-s-plank s-soft" d="M16.6 34.6 L18 34.6 L18 50.6 L16.6 50.6 Z"/><path class="t-s-beam s-soft" d="M19.6 19 L28.4 19 L28.4 27 L19.6 27 Z"/><path class="t-s-cream-deep s-soft" d="M21 20.6 L27 20.6 L27 26.4 L21 26.4 Z"/><path class="t-s-cream s-soft" d="M21 20.6 L24 20.6 L24 26.4 L21 26.4 Z"/></g>'
     },
     pig: {
       label: 'Pig sty',
-      // Low, wide, half-open: a sty is a shelter with a fenced wallow beside it,
-      // never a closed building. The mud is what names it.
       art: '<ellipse class="t-s-shade s-soft" cx="21.3" cy="50.6" rx="15" ry="2.85"/><ellipse class="t-s-shade s-soft" cx="22.5" cy="51" rx="9" ry="1.95"/><g class="stock-ink"><path class="t-s-plank s-soft" d="M4 34 L28 34 L28 49 L4 49 Z"/><path class="t-s-plank-lit s-soft" d="M4 34 L15 34 L15 49 L4 49 Z"/><path class="t-s-plank-deep s-soft" d="M4 47.6 L28 47.6 L28 49 L4 49 Z"/><path class="t-s-roof s-soft" d="M1 35 L16 24 L31 35 Z"/><path class="t-s-roof-lit s-soft" d="M1 35 L16 24 L16 35 Z"/><path class="t-s-roof-deep s-soft" d="M1 35 L31 35 L31 37.2 L1 37.2 Z"/><path class="t-s-beam s-soft" d="M11.6 39 L21 39 L21 49 L11.6 49 Z"/><path class="t-s-ink-soft s-soft" d="M13 40.4 L19.6 40.4 L19.6 49 L13 49 Z"/><path class="t-s-mud s-soft" d="M27 45 Q37.6 42.4 46 46.4 Q37.6 51.4 27 49 Z"/><path class="t-s-mud-lit s-soft" d="M28 45.6 Q37 43.2 44.6 46.4 Q37 45 28 46.6 Z"/><path class="t-s-plank s-soft" d="M30.6 35.6 L32.4 35.6 L32.4 47.6 L30.6 47.6 Z"/><path class="t-s-plank s-soft" d="M39.6 35.6 L41.4 35.6 L41.4 47.6 L39.6 47.6 Z"/><path class="t-s-plank-deep s-soft" d="M29.6 38.6 L43 38.6 L43 40.4 L29.6 40.4 Z"/><path class="t-s-plank-deep s-soft" d="M29.6 43 L43 43 L43 44.6 L29.6 44.6 Z"/></g>'
     },
     pets: {
       label: 'Kennel and cat house',
-      // Both buildings, because both animals live here: the kennel everybody
-      // recognises by its round doorway, and beside it the smaller raised box
-      // with a scratching post — that pairing is what says cat rather than
-      // second dog. Drawn as one piece of scenery so the pen has one building
-      // group rather than two things competing at its corner.
       art: '<ellipse class="t-s-shade s-soft" cx="18.08" cy="50.6" rx="14" ry="2.66"/><ellipse class="t-s-shade s-soft" cx="19.2" cy="51" rx="8.4" ry="1.82"/><ellipse class="t-s-shade s-soft" cx="40.98" cy="50.6" rx="9" ry="1.71"/><ellipse class="t-s-shade s-soft" cx="41.7" cy="51" rx="5.4" ry="1.17"/><g class="stock-ink"><path class="t-s-plank s-soft" d="M2 30 L28 30 L28 50.6 L2 50.6 Z"/><path class="t-s-plank-lit s-soft" d="M2 30 L14 30 L14 50.6 L2 50.6 Z"/><path class="t-s-plank-deep s-soft" d="M2 49 L28 49 L28 50.6 L2 50.6 Z"/><path class="t-s-roof s-soft" d="M0 31 L15 16 L30 31 Z"/><path class="t-s-roof-lit s-soft" d="M0 31 L15 16 L15 31 Z"/><path class="t-s-roof-deep s-soft" d="M0 31 L30 31 L30 33.4 L0 33.4 Z"/><path class="t-s-beam s-soft" d="M15 34 Q22.4 34 22.4 42.4 L22.4 50.6 L7.6 50.6 L7.6 42.4 Q7.6 34 15 34 Z"/><path class="t-s-ink-soft s-soft" d="M15 35.6 Q20.8 35.6 20.8 42.6 L20.8 50.6 L9.2 50.6 L9.2 42.6 Q9.2 35.6 15 35.6 Z"/><path class="t-s-beam s-soft" d="M13 22 L17 22 L17 29 L13 29 Z"/><path class="t-s-plank s-soft" d="M31 37.6 L47 37.6 L47 47.6 L31 47.6 Z"/><path class="t-s-plank-lit s-soft" d="M31 37.6 L38.6 37.6 L38.6 47.6 L31 47.6 Z"/><path class="t-s-roof s-soft" d="M29 38.6 L39 30 L49 38.6 Z"/><path class="t-s-roof-lit s-soft" d="M29 38.6 L39 30 L39 38.6 Z"/><path class="t-s-roof-deep s-soft" d="M29 38.6 L49 38.6 L49 40.4 L29 40.4 Z"/><ellipse class="t-s-beam s-soft" cx="39" cy="43" rx="3.4" ry="3.4"/><path class="t-s-plank-deep s-soft" d="M32.6 47.6 L34.4 47.6 L34.4 50.6 L32.6 50.6 Z"/><path class="t-s-plank-deep s-soft" d="M43.6 47.6 L45.4 47.6 L45.4 50.6 L43.6 50.6 Z"/></g>'
     }
   };
 
-  // A pond needs no building: the water IS the thing, which is why `pond` is a
-  // kind of land here and the fish in it are the stock.
-  // Deliberately small. Full-size sheds in every pen made the screen look like a
-  // row of warehouses, which is the job of the one Store building and nothing
-  // else. A coop is a coop-sized thing at the corner of a yard.
   function houseFor(family){
     if(!family || family.indexOf('pen:') !== 0) return '';
     var house = HOUSES[family.slice(4)];
@@ -5775,18 +5212,6 @@
       'role="img" aria-label="' + house.label + '">' + house.art + '</svg>';
   }
 
-  // ---- the coin -----------------------------------------------------------
-  // A bare number does not say money. This does, without anyone having to read
-  // the word next to it — which is the whole point, because the number appears
-  // in six places and the word will not fit in most of them.
-  //
-  // Lit from the upper left like everything else on the farm: the sheen sits
-  // across the top-left of the face and the contact shadow falls to the lower
-  // right. A coin lit from nowhere looks like a sticker.
-  //
-  // The ring is two filled circles rather than a stroke, because a 0.5px stroke
-  // at this size lands differently on every device pixel ratio and the ring
-  // came and went as the page zoomed.
   var COIN_ART =
     '<circle class="c-cast" cx="8.5" cy="9.1" r="6.9"/>' +
     '<circle class="c-rim" cx="8" cy="8" r="6.9"/>' +
@@ -5798,9 +5223,6 @@
     '<path class="c-glint" d="M4.7 5.9 Q5.9 4.2 7.7 3.8 Q6.1 4.9 5.4 6.5 Z"/>'
   ;
 
-  // `size` is a class suffix rather than a width, so the coin scales with the
-  // text it sits beside instead of being pinned to a pixel count that goes wrong
-  // the moment somebody changes the browser font size.
   function coin(n, size){
     return '<span class="coin-amt' + (size ? ' coin-' + size : '') + '">' +
       '<svg class="coin" viewBox="0 0 16 16" aria-hidden="true" focusable="false">' +
@@ -5810,17 +5232,10 @@
       '</span>';
   }
 
-  // ---- the two buildings on the farm ----
-  // One shop, one store, standing on the yard at the near end of the farm. They
-  // are the way in to the two panels; the HUD button stays as well, because a
-  // building is a mouse target and a button is a keyboard one.
   var BUILDINGS = [
     {
       key: 'shop',
       name: 'Shop',
-      // A market stall seen from the front left: open counter, striped awning,
-      // produce out on display, and a sign on a bracket arm. It has to read as
-      // somewhere you BUY, which a plain house does not.
       viewBox: '0 0 108 92',
       art:
         '<ellipse class="b-shadow" cx="60" cy="85" rx="46" ry="5.6"/><path class="b-roof-dark" d="M76 36 L84 14.6 L90 26.4 Z"/><path class="b-wall-shade" d="M70 84 L70 34 L78 13.5 L86 25 L86 75 Z"/><path class="b-wall" d="M8 34 L70 34 L70 84 L8 84 Z"/><path class="b-wall-lit" d="M8 34 L11.5 34 L11.5 84 L8 84 Z"/><path class="b-shade-soft" d="M65 34 L70 34 L70 84 L65 84 Z"/><path class="b-stone" d="M8 78 L70 78 L70 84 L8 84 Z"/><path class="b-stone-shade" d="M70 78 L86 69 L86 75 L70 84 Z"/><path class="b-stone-line" d="M22 78 L23 78 L23 84 L22 84 Z"/><path class="b-stone-line" d="M38 78 L39 78 L39 84 L38 84 Z"/><path class="b-stone-line" d="M54 78 L55 78 L55 84 L54 84 Z"/><path class="b-stone-line" d="M8 80.6 L70 80.6 L70 81.4 L8 81.4 Z"/><path class="b-inside" d="M15 45 L62 45 L62 78 L15 78 Z"/><path class="b-glow-soft" d="M17 46 L60 46 L60 64 L17 64 Z"/><path class="b-glow-soft" d="M23 46 L54 46 L54 53 L23 53 Z"/><path class="b-counter-top" d="M17 63 L60 63 L63 67 L14 67 Z"/><path class="b-counter" d="M14 67 L63 67 L63 78 L14 78 Z"/><path class="b-shade-soft" d="M14 67 L63 67 L63 69 L14 69 Z"/><path class="b-wall-line" d="M23 69 L23.9 69 L23.9 78 L23 78 Z"/><path class="b-wall-line" d="M33 69 L33.9 69 L33.9 78 L33 78 Z"/><path class="b-wall-line" d="M43 69 L43.9 69 L43.9 78 L43 78 Z"/><path class="b-wall-line" d="M53 69 L53.9 69 L53.9 78 L53 78 Z"/><path class="b-counter-top" d="M14 74.2 L63 74.2 L63 75.4 L14 75.4 Z"/><ellipse class="b-shade-soft" cx="24" cy="63.6" rx="8" ry="1.6"/><ellipse class="b-shade-soft" cx="37.5" cy="63.6" rx="6" ry="1.6"/><ellipse class="b-shade-soft" cx="53" cy="63.6" rx="8" ry="1.6"/><path class="b-crate-top" d="M18 58 L31 58 L33.5 55.4 L20.5 55.4 Z"/><path class="b-crate" d="M18 58 L31 58 L31 64 L18 64 Z"/><path class="b-crate-dark" d="M18 58 L20.2 58 L20.2 64 L18 64 Z"/><path class="b-crate-dark" d="M28.8 58 L31 58 L31 64 L28.8 64 Z"/><path class="b-crate-dark" d="M20.2 60.6 L28.8 60.6 L28.8 61.8 L20.2 61.8 Z"/><ellipse class="b-shade-soft" cx="25.6" cy="56.2" rx="6.4" ry="1.3"/><circle class="b-fruit-a" cx="22" cy="54" r="2.4"/><circle class="b-fruit-b" cx="26.4" cy="53.2" r="2.6"/><circle class="b-fruit-c" cx="30.6" cy="54" r="2.4"/><path class="b-sack" d="M32.6 64 Q31.4 57.6 35.6 55 Q37.2 53.6 39.2 55 Q43.4 57.2 42.2 64 Z"/><path class="b-sack-shade" d="M39.2 64 Q40.8 58 39.2 55 Q41.2 55 42.2 57.4 Q43.4 60.4 42.2 64 Z"/><path class="b-sack-shade" d="M35.8 53.4 L39.4 53.4 L39.4 55.2 L35.8 55.2 Z"/><path class="b-sack" d="M35.8 53.4 L34 51.4 L36.4 52.4 Z"/><path class="b-sack" d="M39.4 53.4 L41.4 51.6 L40 52.6 Z"/><circle class="b-fruit-a" cx="48" cy="61" r="2.6"/><circle class="b-fruit-b" cx="53" cy="61" r="2.6"/><circle class="b-fruit-a" cx="58" cy="61" r="2.6"/><circle class="b-fruit-c" cx="50.5" cy="56.6" r="2.6"/><circle class="b-fruit-a" cx="55.5" cy="56.6" r="2.6"/><path class="b-awning-shade" d="M70 39 L86 30 L80 37 L64 46 Z"/><path class="b-awning-stripe" d="M10 39 L17.5 39 L11.5 46 Q7.75 48.6 4 46 Z"/><path class="b-awning" d="M17.5 39 L25 39 L19 46 Q15.25 48.6 11.5 46 Z"/><path class="b-awning-stripe" d="M25 39 L32.5 39 L26.5 46 Q22.75 48.6 19 46 Z"/><path class="b-awning" d="M32.5 39 L40 39 L34 46 Q30.25 48.6 26.5 46 Z"/><path class="b-awning-stripe" d="M40 39 L47.5 39 L41.5 46 Q37.75 48.6 34 46 Z"/><path class="b-awning" d="M47.5 39 L55 39 L49 46 Q45.25 48.6 41.5 46 Z"/><path class="b-awning-stripe" d="M55 39 L62.5 39 L56.5 46 Q52.75 48.6 49 46 Z"/><path class="b-awning" d="M62.5 39 L70 39 L64 46 Q60.25 48.6 56.5 46 Z"/><path class="b-awning-fold" d="M17.5 39 L18.3 39 L12.3 46 L11.5 46 Z"/><path class="b-awning-fold" d="M32.5 39 L33.3 39 L27.3 46 L26.5 46 Z"/><path class="b-awning-fold" d="M47.5 39 L48.3 39 L42.3 46 L41.5 46 Z"/><path class="b-awning-fold" d="M62.5 39 L63.3 39 L57.3 46 L56.5 46 Z"/><path class="b-sign-frame" d="M73 47 L83 41.4 L83 57.4 L73 63 Z"/><path class="b-glow" d="M74.3 48.3 L81.7 44.1 L81.7 56.1 L74.3 60.3 Z"/><path class="b-bar" d="M77.4 46.5 L78.6 45.8 L78.6 58.2 L77.4 58.9 Z"/><path class="b-bar" d="M74.3 53.5 L81.7 49.3 L81.7 50.5 L74.3 54.7 Z"/><path class="b-metal" d="M82 30 L104 30 L104 32 L82 32 Z"/><path class="b-metal" d="M83 36.6 L94 31.3 L94.8 32.7 L83.8 38 Z"/><circle class="b-metal" cx="103" cy="31" r="1.8"/><path class="b-metal-hi" d="M88 32 L89.2 32 L89.2 35.8 L88 35.8 Z"/><path class="b-metal-hi" d="M99.8 32 L101 32 L101 35.8 L99.8 35.8 Z"/><path class="b-sign-frame" d="M87 35.6 Q86 35.6 86 36.6 L86 48.4 Q86 49.4 87 49.4 L103 49.4 Q104 49.4 104 48.4 L104 36.6 Q104 35.6 103 35.6 Z"/><path class="b-sign" d="M87.6 37.2 L102.4 37.2 L102.4 47.8 L87.6 47.8 Z"/><circle class="b-coin-dark" cx="95" cy="42.5" r="4.4"/><circle class="b-coin" cx="95" cy="42.5" r="3.1"/><circle class="b-glow" cx="93.6" cy="41.1" r="1"/><path class="b-barrel" d="M2.6 68 Q1 76 2.6 84 L10.4 84 Q12 76 10.4 68 Z"/><ellipse class="b-barrel-hi" cx="6.5" cy="68" rx="3.9" ry="1.6"/><path class="b-metal" d="M2 71.4 L11 71.4 L11 72.9 L2 72.9 Z"/><path class="b-metal" d="M1.7 78 L11.3 78 L11.3 79.5 L1.7 79.5 Z"/><circle class="b-fruit-b" cx="4.4" cy="65.6" r="2"/><circle class="b-fruit-a" cx="8.4" cy="65.2" r="2.1"/><path class="b-metal" d="M26 8 L31 8 L31 16 L26 16 Z"/><path class="b-metal-hi" d="M24.5 6.6 L32.5 6.6 L32.5 8.6 L24.5 8.6 Z"/><path class="b-roof" d="M2 36 L76 36 L84 13.5 L10 13.5 Z"/><path class="b-roof-line" d="M3.28 32.4 L77.28 32.4 L77.28 33.6 L3.28 33.6 Z"/><path class="b-roof-line" d="M4.64 28.58 L78.64 28.58 L78.64 29.7 L4.64 29.7 Z"/><path class="b-roof-line" d="M5.92 24.98 L79.92 24.98 L79.92 26.06 L5.92 26.06 Z"/><path class="b-roof-line" d="M6.96 22.05 L80.96 22.05 L80.96 23.05 L6.96 23.05 Z"/><path class="b-roof-line" d="M7.84 19.58 L81.84 19.58 L81.84 20.5 L7.84 20.5 Z"/><path class="b-roof-line" d="M8.56 17.55 L82.56 17.55 L82.56 18.4 L8.56 18.4 Z"/><path class="b-roof-hi" d="M10 13.5 L84 13.5 L84 16 L10 16 Z"/><path class="b-roof-dark" d="M2 36 L76 36 L76 38 Q71.38 41.2 66.75 38 Q62.13 41.2 57.5 38 Q52.88 41.2 48.25 38 Q43.63 41.2 39 38 Q34.38 41.2 29.75 38 Q25.13 41.2 20.5 38 Q15.88 41.2 11.25 38 Q6.63 41.2 2 38 Z"/><circle class="b-smoke" cx="33" cy="5" r="2.2"/><circle class="b-smoke" cx="36.6" cy="3" r="1.6"/><circle class="b-smoke" cx="39.2" cy="1.8" r="1.1"/>'
@@ -5828,9 +5243,6 @@
     {
       key: 'store',
       name: 'Store',
-      // A barn with its doors braced shut and a hayloft over them. Closed doors
-      // against the open counter of the shop is the whole distinction: one is
-      // open for business, one holds what you have put away.
       viewBox: '0 0 108 92',
       art:
         '<ellipse class="b-shadow" cx="58" cy="86" rx="48" ry="5.8"/><path class="b-barn-shade" d="M64 34 L80 26 L80 76 L64 84 Z"/><path class="b-wall-line" d="M70 30.9 L70.9 30.5 L70.9 80.5 L70 80.9 Z"/><path class="b-wall-line" d="M76 27.9 L76.9 27.5 L76.9 77.5 L76 77.9 Z"/><path class="b-sign-frame" d="M68 48 L76 44 L76 58 L68 62 Z"/><path class="b-glow" d="M69.2 48.9 L74.8 46.1 L74.8 56.9 L69.2 59.7 Z"/><path class="b-bar" d="M71.4 46.9 L72.6 46.3 L72.6 59.1 L71.4 59.7 Z"/><path class="b-bar" d="M69.2 53.2 L74.8 50.4 L74.8 51.6 L69.2 54.4 Z"/><path class="b-barn" d="M8 84 L8 34 L14 26 L36 15 L58 26 L64 34 L64 84 Z"/><path class="b-barn-lit" d="M8 34 L11.5 34 L11.5 84 L8 84 Z"/><path class="b-barn-lit" d="M14 26 L36 15 L36 17.6 L15.7 27.7 Z"/><path class="b-shade-soft" d="M58 26 L64 34 L64 84 L58 84 Z"/><path class="b-wall-line" d="M16 30 L17 30 L17 74 L16 74 Z"/><path class="b-wall-line" d="M24 27 L25 27 L25 74 L24 74 Z"/><path class="b-wall-line" d="M32 22 L33 22 L33 74 L32 74 Z"/><path class="b-wall-line" d="M40 22 L41 22 L41 74 L40 74 Z"/><path class="b-wall-line" d="M48 27 L49 27 L49 74 L48 74 Z"/><path class="b-wall-line" d="M56 30 L57 30 L57 74 L56 74 Z"/><path class="b-stone" d="M8 74 L64 74 L64 84 L8 84 Z"/><path class="b-stone-shade" d="M64 74 L80 66 L80 76 L64 84 Z"/><path class="b-stone-line" d="M8 78.4 L64 78.4 L64 79.3 L8 79.3 Z"/><path class="b-stone-line" d="M20 74 L21 74 L21 78.4 L20 78.4 Z"/><path class="b-stone-line" d="M34 74 L35 74 L35 78.4 L34 78.4 Z"/><path class="b-stone-line" d="M48 74 L49 74 L49 78.4 L48 78.4 Z"/><path class="b-stone-line" d="M14 79.3 L15 79.3 L15 84 L14 84 Z"/><path class="b-stone-line" d="M28 79.3 L29 79.3 L29 84 L28 84 Z"/><path class="b-stone-line" d="M42 79.3 L43 79.3 L43 84 L42 84 Z"/><path class="b-stone-line" d="M56 79.3 L57 79.3 L57 84 L56 84 Z"/><path class="b-door-shade" d="M21 43 L53 43 L53 74 L21 74 Z"/><path class="b-door-lit" d="M23 45.5 L36.2 45.5 L36.2 74 L23 74 Z"/><path class="b-door" d="M37.8 45.5 L51 45.5 L51 74 L37.8 74 Z"/><path class="b-door-plank" d="M23.5 46.5 L26.2 46.5 L35.7 72.8 L33 72.8 Z"/><path class="b-door-plank" d="M33 46.5 L35.7 46.5 L26.2 72.8 L23.5 72.8 Z"/><path class="b-door-plank" d="M23 45.5 L36.2 45.5 L36.2 48 L23 48 Z"/><path class="b-door-plank" d="M23 71.5 L36.2 71.5 L36.2 74 L23 74 Z"/><path class="b-door-plank" d="M38.3 46.5 L41 46.5 L50.5 72.8 L47.8 72.8 Z"/><path class="b-door-plank" d="M47.8 46.5 L50.5 46.5 L41 72.8 L38.3 72.8 Z"/><path class="b-door-plank" d="M37.8 45.5 L51 45.5 L51 48 L37.8 48 Z"/><path class="b-door-plank" d="M37.8 71.5 L51 71.5 L51 74 L37.8 74 Z"/><path class="b-loft-inside" d="M36.4 45 L37.6 45 L37.6 74 L36.4 74 Z"/><path class="b-metal" d="M35.2 56 L38.8 56 L38.8 63.2 L35.2 63.2 Z"/><circle class="b-metal-hi" cx="37" cy="59.6" r="1.2"/><path class="b-metal" d="M23 50 L26 50 L26 52 L23 52 Z"/><path class="b-metal" d="M23 67 L26 67 L26 69 L23 69 Z"/><path class="b-metal" d="M48 50 L51 50 L51 52 L48 52 Z"/><path class="b-metal" d="M48 67 L51 67 L51 69 L48 69 Z"/><path class="b-barn-trim" d="M29 21 L47 21 L47 35 L29 35 Z"/><path class="b-loft-inside" d="M30.6 22.6 L45.4 22.6 L45.4 35 L30.6 35 Z"/><circle class="b-glow-soft" cx="37" cy="26" r="2.7"/><circle class="b-glow" cx="37" cy="26" r="1.3"/><path class="b-hay" d="M30.6 31.4 Q33 28.6 36 31.2 Q38.6 28.2 41.4 31.4 Q43.6 29 45.4 31.6 L45.4 35 L30.6 35 Z"/><path class="b-hay-dark" d="M32.4 31.8 L33.2 31.8 L33.2 35 L32.4 35 Z"/><path class="b-hay-dark" d="M39 31.6 L39.8 31.6 L39.8 35 L39 35 Z"/><path class="b-hay" d="M42.6 30 L46.6 27.6 L47.2 28.6 L43.2 31 Z"/><path class="b-door-plank" d="M33 17 L39 17 L30.4 21 L24.4 21 Z"/><path class="b-door-shade" d="M39 17 L39 18.8 L30.4 22.8 L30.4 21 Z"/><path class="b-door" d="M24.4 21 L30.4 21 L30.4 22.8 L24.4 22.8 Z"/><path class="b-metal" d="M26.8 22.8 L28 22.8 L28 24 L26.8 24 Z"/><circle class="b-metal" cx="27.4" cy="25.2" r="1.8"/><circle class="b-loft-inside" cx="27.4" cy="25.2" r="0.8"/><path class="b-rope" d="M26.8 26.8 L28 26.8 L28 38 L26.8 38 Z"/><path class="b-metal" d="M26.1 38 L28.7 38 L28.7 39.6 L26.1 39.6 Z"/><path class="b-trim-shade" d="M48 3 L51 1.4 L51 10.4 L48 12 Z"/><path class="b-barn-trim" d="M42 3 L48 3 L48 12 L42 12 Z"/><path class="b-loft-inside" d="M43.2 4.6 L46.8 4.6 L46.8 9.6 L43.2 9.6 Z"/><path class="b-barn-trim" d="M43.2 5.6 L46.8 5.6 L46.8 6.4 L43.2 6.4 Z"/><path class="b-barn-trim" d="M43.2 7.4 L46.8 7.4 L46.8 8.2 L43.2 8.2 Z"/><path class="b-barn-roof-hi" d="M40.4 3 L49.2 3 L52.2 1.4 L43.4 1.4 Z"/><path class="b-barn-roof" d="M68 37.5 L59.5 24.5 L75.5 16.5 L84 29.5 Z"/><path class="b-barn-roof-line" d="M65.9 34.3 L81.9 26.3 L81.3 25.4 L65.3 33.4 Z"/><path class="b-barn-roof-line" d="M63.8 31 L79.8 23 L79.2 22.1 L63.2 30.1 Z"/><path class="b-barn-roof-line" d="M61.9 28.2 L77.9 20.2 L77.3 19.3 L61.3 27.3 Z"/><path class="b-barn-roof-line" d="M60.4 25.8 L76.4 17.8 L75.8 16.9 L59.8 24.9 Z"/><path class="b-barn-roof-hi" d="M59.5 24.5 L36 12 L52 4 L75.5 16.5 Z"/><path class="b-barn-roof-line" d="M54.3 21.7 L70.3 13.7 L69.4 13.2 L53.4 21.2 Z"/><path class="b-barn-roof-line" d="M49.2 19 L65.2 11 L64.3 10.5 L48.3 18.5 Z"/><path class="b-barn-roof-line" d="M44.7 16.6 L60.7 8.6 L59.8 8.1 L43.8 16.1 Z"/><path class="b-barn-roof-line" d="M40.9 14.6 L56.9 6.6 L56 6.1 L40 14.1 Z"/><path class="b-barn-roof-line" d="M37.9 13 L53.9 5 L53 4.5 L37 12.5 Z"/><path class="b-barn-ridge" d="M36 12 L52 4 L52 6.4 L36 14.4 Z"/><path class="b-barn-trim" d="M4 37.5 L12.5 24.5 L36 12 L59.5 24.5 L68 37.5 L64 34 L58 26 L36 15 L14 26 L8 34 Z"/><path class="b-barn-roof-dark" d="M4 37.5 L8 34 L8 36.4 L4 39.9 Z"/><path class="b-barn-roof-dark" d="M64 34 L68 37.5 L68 39.9 L64 36.4 Z"/><path class="b-hay-hi" d="M1 73 L15 73 L18.2 70.4 L4.2 70.4 Z"/><path class="b-hay" d="M1 73 L15 73 L15 83 L1 83 Z"/><path class="b-hay-dark" d="M15 73 L18.2 70.4 L18.2 80.4 L15 83 Z"/><path class="b-hay-dark" d="M1 75.6 L15 75.6 L15 77 L1 77 Z"/><path class="b-hay-dark" d="M1 80 L15 80 L15 81.4 L1 81.4 Z"/><path class="b-hay-hi" d="M3 63 L16 63 L19.2 60.4 L6.2 60.4 Z"/><path class="b-hay" d="M3 63 L16 63 L16 73 L3 73 Z"/><path class="b-hay-dark" d="M16 63 L19.2 60.4 L19.2 70.4 L16 73 Z"/><path class="b-hay-dark" d="M3 65.6 L16 65.6 L16 67 L3 67 Z"/><path class="b-hay-dark" d="M3 70 L16 70 L16 71.4 L3 71.4 Z"/><path class="b-barrel-hi" d="M52.4 76 L61.6 76 L61.6 78.2 L52.4 78.2 Z"/><path class="b-barrel" d="M53.4 78.2 L60.6 78.2 L59.4 85 L54.6 85 Z"/><path class="b-leaf" d="M57 76 Q52.6 74 52 68.6 Q56.6 70 57 76 Z"/><path class="b-leaf" d="M57 76 Q61.4 74.4 62.4 69.4 Q57.6 70.6 57 76 Z"/><path class="b-leaf" d="M57 76 Q56.2 70.6 58.4 66.4 Q60.4 71 57 76 Z"/>'
@@ -5852,26 +5264,13 @@
     els.gardenYard.innerHTML = html;
   }
 
-  // ---- the farmer, and the camera that follows them ----
-  // Deliberately a few shapes and no face: at the size this is drawn, a face
-  // becomes two smudges, and a character with a bad face reads worse than one
-  // with none. Straw hat, shirt, two legs — that is enough to be somebody.
   var FARMER_ART = '<svg class="farmer-svg" viewBox="0 0 42 60" width="42" height="60" aria-hidden="true"><ellipse class="f-shadow" cx="21.4" cy="57.5" rx="12.4" ry="2.6"/><ellipse class="f-shadow" cx="21.8" cy="57.8" rx="7.6" ry="1.7"/><g class="farmer-bob"><g class="f-leg f-leg-a"><path class="f-leg-dark" d="M21.6 33.4 H27.2 L26.8 51 H22 Z"/><path class="f-boot-dark" d="M21.75 42.4 H27.05 V44 H21.7 Z"/><path class="f-boot-dark" d="M21.2 50 H27.2 V56.2 H21.2 Z"/><path class="f-boot-dark" d="M27.2 52.6 H28.5 Q29.3 52.6 29.3 54.2 V56.2 H27.2 Z"/><path class="f-boot-dark" d="M20.7 56 H29.3 Q29.8 56 29.8 56.9 V58 H20.7 Z"/></g><g class="f-arm f-arm-a"><path class="f-arm-dark" d="M28.4 20.8 L29 21.6 L31.8 30.4 L28.8 31 Z"/><path class="f-glove" d="M27.9 30 h4.2 v3.6 q0 1 -2.1 1 q-2.1 0 -2.1 -1 Z"/></g><path class="f-shirt" d="M13.4 21.4 Q21 17.8 28.6 21.4 L29.8 35.8 Q21 37.6 12.2 35.8 Z"/><path class="f-shirt-lit" d="M13.4 21.6 Q14.6 21 16.4 20.6 L15.4 36.6 L12.4 35.8 Z"/><path class="f-arm-dark" d="M28.6 21.6 Q27.4 21 25.6 20.6 L26.6 36.6 L29.6 35.8 Z"/><path class="f-arm-dark" d="M20 22.6 Q21.4 29 19.4 36.4 L21.2 36.6 Q23 29 21.6 22.6 Z"/><path class="f-arm-dark" d="M17.4 19.4 Q21 22.4 24.6 19.4 Q21 18 17.4 19.4 Z"/><path class="f-belt" d="M12.4 33.4 H29.6 V36.4 H12.4 Z"/><path class="f-buckle" d="M19.4 33.8 H22.6 V36 H19.4 Z"/><g class="f-leg f-leg-b"><path class="f-leg" d="M14.8 33.4 H20.4 L20 51 H15.2 Z"/><path class="f-leg-dark" d="M14.95 42.4 H20.25 V44 H14.9 Z"/><path class="f-boot" d="M14.4 50 H20.4 V56.2 H14.4 Z"/><path class="f-boot" d="M20.4 52.6 H21.7 Q22.5 52.6 22.5 54.2 V56.2 H20.4 Z"/><path class="f-boot-dark" d="M13.9 56 H22.5 Q23 56 23 56.9 V58 H13.9 Z"/></g><g class="f-arm f-arm-b"><path class="f-arm-lit" d="M13.6 20.8 L13 21.6 L10.2 30.4 L13.2 31 Z"/><path class="f-glove" d="M9.9 30 h4.2 v3.6 q0 1 -2.1 1 q-2.1 0 -2.1 -1 Z"/></g><path class="f-skin-deep" d="M18.6 17.6 H23.4 V21.6 H18.6 Z"/><ellipse class="f-skin" cx="21" cy="15.4" rx="4.5" ry="4.9"/><path class="f-skin-deep" d="M16.51 15.06C16.57 14.79 16.67 13.97 16.86 13.48C17.05 12.98 17.34 12.5 17.67 12.11C18 11.71 18.41 11.36 18.84 11.1C19.27 10.84 19.77 10.66 20.25 10.57C20.74 10.48 21.26 10.48 21.75 10.57C22.23 10.66 22.73 10.84 23.16 11.1C23.59 11.36 24 11.71 24.33 12.11C24.66 12.5 24.95 12.98 25.14 13.48C25.33 13.97 25.43 14.79 25.49 15.06L23.49 15.2C23.46 15.04 23.41 14.55 23.3 14.26C23.19 13.97 23.03 13.69 22.85 13.45C22.67 13.22 22.44 13.01 22.2 12.86C21.96 12.7 21.68 12.59 21.42 12.54C21.15 12.49 20.85 12.49 20.58 12.54C20.32 12.59 20.04 12.7 19.8 12.86C19.56 13.01 19.33 13.22 19.15 13.45C18.97 13.69 18.81 13.97 18.7 14.26C18.59 14.55 18.54 15.04 18.51 15.2Z"/><ellipse class="f-hat" cx="21" cy="13.6" rx="11.2" ry="3.5"/><path class="f-hat-lit" d="M9.81 13.48C9.86 13.35 9.95 12.98 10.14 12.74C10.34 12.5 10.62 12.26 10.97 12.04C11.32 11.82 11.76 11.61 12.26 11.41C12.75 11.22 13.32 11.04 13.93 10.88C14.55 10.73 15.23 10.59 15.93 10.48C16.64 10.37 17.4 10.28 18.16 10.21C18.93 10.15 19.73 10.11 20.52 10.1C21.31 10.09 22.12 10.11 22.9 10.15C23.68 10.19 24.81 10.32 25.2 10.35L24.67 11.65C24.34 11.63 23.35 11.56 22.66 11.53C21.98 11.51 21.27 11.5 20.58 11.5C19.89 11.51 19.19 11.53 18.52 11.57C17.85 11.61 17.18 11.66 16.57 11.73C15.95 11.79 15.35 11.88 14.82 11.97C14.28 12.06 13.78 12.17 13.35 12.29C12.92 12.4 12.53 12.53 12.23 12.66C11.92 12.8 11.67 12.94 11.5 13.08C11.33 13.23 11.26 13.45 11.21 13.53Z"/><path class="f-hat-dark" d="M32.09 14.09C31.92 14.26 31.56 14.82 31.05 15.15C30.53 15.47 29.81 15.79 29 16.05C28.18 16.31 27.18 16.54 26.14 16.71C25.11 16.88 23.93 17 22.77 17.06C21.62 17.11 20.38 17.11 19.23 17.06C18.07 17 16.89 16.88 15.86 16.71C14.82 16.54 13.82 16.31 13 16.05C12.19 15.79 11.47 15.47 10.95 15.15C10.44 14.82 10.08 14.26 9.91 14.09L11.2 13.91C11.35 14.02 11.66 14.37 12.12 14.57C12.57 14.78 13.21 14.98 13.93 15.14C14.65 15.3 15.54 15.45 16.45 15.55C17.37 15.66 18.41 15.74 19.43 15.77C20.45 15.81 21.55 15.81 22.57 15.77C23.59 15.74 24.63 15.66 25.55 15.55C26.46 15.45 27.35 15.3 28.07 15.14C28.79 14.98 29.43 14.78 29.88 14.57C30.34 14.37 30.65 14.02 30.8 13.91Z"/><path class="f-hat" d="M14.8 13.4 Q15.4 4.6 21 4.6 Q26.6 4.6 27.2 13.4 Z"/><path class="f-hat-lit" d="M14.8 13.4 Q15.4 5.4 19.2 4.8 Q17 7.4 16.9 13.4 Z"/><path class="f-hat-dark" d="M27.2 13.4 Q26.6 5.4 22.8 4.8 Q25 7.4 25.1 13.4 Z"/><path class="f-band" d="M14.9 10.8 Q21 9.4 27.1 10.8 L27.2 12.8 Q21 11.4 14.8 12.8 Z"/></g></svg>';
 
-  // World coordinates, in pixels, inside #gardenWorld. Null until the farm has
-  // been laid out once and there is somewhere to stand.
-  var farmer = null;      // { x, y, tx, ty, facing }
+  var farmer = null;
   var camera = { x: 0, y: 0 };
   var farmFrame = 0;
-  // About 150px a second, which crosses one parcel in roughly three seconds:
-  // fast enough not to be a chore, slow enough to read as somebody walking
-  // rather than a cursor being dragged.
-  // Pixels per SECOND, not per frame. The old step was per frame, so the same
-  // code walked at 150px/s on a 60Hz screen and 300px/s on a 120Hz one — the
-  // pace the user actually approved was the 60Hz one, so this keeps that and
-  // fixes every other refresh rate.
   var FARMER_SPEED = 150;
-  var FARMER_EASE = 26;    // distance over which the last stride slows down
+  var FARMER_EASE = 26;
   var farmLast = 0;
 
   function farmReduceMotion(){
@@ -5880,9 +5279,6 @@
     }catch(e){ return false; }
   }
 
-  // The camera keeps the farmer in the middle, but never past the edge of the
-  // world — panning into empty space off the side of the farm would read as the
-  // view being broken.
   function farmCameraApply(){
     if(!els.gardenWorld || !els.gardenScene || !farmer) return;
     var vw = els.gardenScene.clientWidth;
@@ -5901,14 +5297,9 @@
     }
   }
 
-  // One frame loop for everything that moves on the farm, because two loops
-  // would drift apart and each would pay for its own layout read.
   function farmTick(ts){
     farmFrame = 0;
     if(typeof ts !== 'number') ts = 0;
-    // Clamped: coming back to a backgrounded tab hands you one enormous delta,
-    // and an animal should not teleport across its pen to catch up on the time
-    // it spent not being looked at.
     var dt = farmLast ? Math.min(50, ts - farmLast) : 16.7;
     if(dt < 0) dt = 16.7;
     farmLast = ts;
@@ -5930,11 +5321,6 @@
       farmCameraApply();
       return false;
     }
-    // A walking pace, and the same one whatever the distance. The old step was a
-    // fraction of the remaining distance, which meant the farmer SPRINTED at the
-    // start of a long walk and crept at the end — the opposite of how walking
-    // works. Constant speed, easing off only over the last stride or so, so the
-    // arrival is not a dead stop.
     var step = FARMER_SPEED * dt / 1000;
     if(far < FARMER_EASE) step = Math.max(0.7, step * (far / FARMER_EASE));
     step = Math.min(far, step);
@@ -5951,7 +5337,6 @@
     farmer.tx = x;
     farmer.ty = y;
     if(farmReduceMotion()){
-      // No frame-by-frame chase: the view simply is where it needs to be.
       farmer.x = x;
       farmer.y = y;
       farmCameraApply();
@@ -5960,13 +5345,6 @@
     if(!farmFrame) farmFrame = requestAnimationFrame(farmTick);
   }
 
-  // A right-click is the whole movement control, the way it is in a MOBA: press
-  // where you want to stand and the farmer walks there. Left-click is left alone
-  // for the plots, so working the farm and walking about never compete for the
-  // same gesture.
-  //
-  // A destination marker is drawn where the press landed, because without one a
-  // click that misses the walkable area looks like the game ignored you.
   function farmMark(x, y){
     if(!els.gardenWorld) return;
     var mark = els.gardenWorld.querySelector('.farm-mark');
@@ -5977,8 +5355,6 @@
       els.gardenWorld.appendChild(mark);
     }
     mark.style.transform = 'translate(' + Math.round(x) + 'px,' + Math.round(y) + 'px)';
-    // Restart the animation on every press: the same element re-triggered, so a
-    // rapid series of clicks does not leave a stale marker sitting there.
     mark.classList.remove('farm-mark-ping');
     void mark.offsetWidth;
     mark.classList.add('farm-mark-ping');
@@ -5993,31 +5369,21 @@
     els.gardenFarmer.innerHTML = FARMER_ART;
     els.gardenWorld.appendChild(els.gardenFarmer);
 
-    // Standing on the path between the first two parcels, not pinned to a corner:
-    // the opening shot should be of the farm, not of the fence.
     farmer = { x: 640, y: 300, tx: 640, ty: 300, facing: 1 };
     farmCameraApply();
 
-    // World point under the pointer = pointer in the viewport + camera offset.
-    // Bound once; the world only ever moves by transform, so no rebuild of the
-    // parcels invalidates this.
     function pointIn(e){
       var box = els.gardenScene.getBoundingClientRect();
       return { x: e.clientX - box.left + camera.x, y: e.clientY - box.top + camera.y };
     }
 
     els.gardenScene.addEventListener('contextmenu', function(e){
-      // Only inside the scene. The browser keeps its menu everywhere else.
       e.preventDefault();
       var at = pointIn(e);
       farmMark(at.x, at.y);
       farmWalkTo(at.x, at.y);
     });
 
-    // Touch has no right button and no hover. A long press is the closest thing
-    // the platform offers, and browsers already raise `contextmenu` for it — so
-    // touch is handled by the line above and needs nothing of its own. A plain
-    // tap therefore keeps working as a tap on whatever is under it.
     window.addEventListener('resize', function(){
       farmCameraApply();
       roamRelayout();
@@ -6025,56 +5391,21 @@
     });
   }
 
-  // ---- animals wander their own parcel ----
-  //
-  // Driven a frame at a time from here rather than by a CSS keyframe track,
-  // because a fixed track cannot do any of the three things that make this read
-  // as an animal instead of a sliding counter:
-  //
-  //   * Stay inside the fence. How much room an animal has depends on WHICH
-  //     plot of the parcel it is anchored to — one on the outside column can
-  //     only go inwards. The old track handed every animal the same +-1.9 plots
-  //     and walked the edge ones straight through the fence.
-  //   * Face where it is going. A track sets the flip at fixed percentages while
-  //     the direction comes from a hash, so an animal spent most of its time
-  //     walking backwards.
-  //   * Stop. Animals graze, look up, then move off. One eased track never comes
-  //     to rest, and it snapped from scaleX(-1) straight back to scaleX(1) at the
-  //     loop boundary.
 
-  // Animals and fish move about; plants and buildings do not.
   function roams(meta){
     return !!meta && (meta.cat === 'animal' || meta.cat === 'fish');
   }
 
   var roamers = [];
-  // Position survives a redraw, keyed by the item id. Harvesting rebuilds the
-  // plot, and an animal that jumps back to the middle of its pen every time you
-  // collect an egg reads as a different animal, not as the same one moving.
   var roamState = {};
-  var ROAM_TURN_MS = 340;    // spent turning on the spot, walking nowhere
+  var ROAM_TURN_MS = 340;
 
-  // Everything a species needs to move differently. A cow does not scurry and a
-  // fish does not stand still, and one set of numbers for both is what made the
-  // pen look choreographed.
-  //
-  // These were all roughly half as lively to begin with, and the pen read as
-  // frozen: measured in a real browser, thirteen animals managed four moves
-  // between them in three and a half seconds. Long pauses are believable when
-  // you watch a field for a minute and wrong when somebody glances at a card for
-  // five seconds, and the card is what this is.
-  //
-  // `reach` is the fraction of the enclosure a single walk has to cover. Without
-  // it, a uniformly random destination averages a third of the pen and throws up
-  // a lot of two-pixel shuffles, which read as a stutter rather than as walking.
   var ROAM_GAITS = {
     fish:  { speed: 20, vary: 0.45, pause: [80, 420],   turn: 560, pad: 0.14, reach: 0.42 },
     bird:  { speed: 36, vary: 0.40, pause: [260, 1100], turn: 200, pad: 0.22, reach: 0.34 },
     small: { speed: 31, vary: 0.35, pause: [340, 1500], turn: 280, pad: 0.20, reach: 0.36 },
     large: { speed: 23, vary: 0.25, pause: [600, 2400], turn: 420, pad: 0.26, reach: 0.40 }
   };
-  // Body mass, roughly. A duck and a chicken potter; a cow ambles and stands
-  // about for a long time; a fish never really stops.
   var ROAM_GAIT_BY_KIND = { duck:'bird', chicken:'bird', cat:'small', dog:'small',
     goat:'small', sheep:'small', pig:'large', cow:'large' };
 
@@ -6084,10 +5415,6 @@
     return ROAM_GAITS[ROAM_GAIT_BY_KIND[meta.kind]] || ROAM_GAITS.small;
   }
 
-  // Called once per rendered animal. The element carrying the transform is the
-  // sprite, never the plot: the plot has to stay where it is to remain a click
-  // target, and because it does not clip, pressing the animal where it actually
-  // stands still works.
   function addRoamer(el, slot, id, meta){
     if(farmReduceMotion()) return;
     var prev = roamState[id];
@@ -6099,8 +5426,6 @@
       want: (h & 1) ? -1 : 1,
       from: 1,
       state: 'idle',
-      // Staggered, but only over about a second: any longer and the first thing
-      // you see on opening the card is a field of statues.
       t: (h >>> 8 & 1023) / 1023 * 900,
       seed: h,
       tx: 0, ty: 0
@@ -6108,8 +5433,6 @@
     r.el = el;
     r.slot = slot;
     r.gait = gait;
-    // Each animal a little faster or slower than its kind, from its own id, so
-    // a pen of six chickens does not move as one body.
     r.speed = gait.speed * (1 + ((h >>> 20 & 255) / 255 - 0.5) * gait.vary);
     r.ready = false;
     roamState[id] = r;
@@ -6117,31 +5440,20 @@
     roamApply(r);
   }
 
-  // The fence, in pixels, relative to where this sprite sits when untransformed.
-  // Measured off the real boxes rather than computed from the column index,
-  // because the grid has gaps and padding and an animal that trusts arithmetic
-  // about a layout it cannot see ends up standing in the path.
   function roamMeasure(r){
     var grid = r.slot.parentNode;
     if(!grid) return false;
     var sb = r.slot.getBoundingClientRect();
     var gb = grid.getBoundingClientRect();
-    if(!sb.width || !gb.width) return false;   // not laid out yet; try next frame
-    // The drawing is wider than the plot it is anchored to, so the sprite has to
-    // stop short of the rail by a fraction of its own body.
+    if(!sb.width || !gb.width) return false;
     var padX = sb.width * r.gait.pad;
     var padY = sb.height * r.gait.pad * 0.5;
-    // sb already includes the transform currently applied, so r.x/r.y go back in
-    // to get bounds relative to the untransformed home position.
     r.minX = (gb.left - sb.left) + r.x + padX;
     r.maxX = (gb.right - sb.right) + r.x - padX;
     r.minY = (gb.top - sb.top) + r.y + padY;
     r.maxY = (gb.bottom - sb.bottom) + r.y - padY;
-    // A parcel narrower than one padded sprite: pin it to the middle rather than
-    // let the bounds invert and fling it out of the pen.
     if(r.minX > r.maxX){ r.minX = r.maxX = (r.minX + r.maxX) / 2; }
     if(r.minY > r.maxY){ r.minY = r.maxY = (r.minY + r.maxY) / 2; }
-    // Whatever it inherited from a previous layout, it is inside the fence now.
     r.x = Math.min(r.maxX, Math.max(r.minX, r.x));
     r.y = Math.min(r.maxY, Math.max(r.minY, r.y));
     r.tx = Math.min(r.maxX, Math.max(r.minX, r.tx));
@@ -6151,16 +5463,12 @@
   }
 
   function roamRand(r){
-    // The walk still comes out of the id, so the same animal takes the same walk
-    // every time — just advanced a step at a time instead of laid out in advance.
     r.seed = mix32(r.seed + 0x9E3779B9);
     return (r.seed >>> 8 & 65535) / 65535;
   }
 
   function roamPick(r){
     var w = r.maxX - r.minX, hgt = r.maxY - r.minY;
-    // A walk has to be worth taking. Resampled rather than nudged, because
-    // pushing a too-close target outwards piles destinations up on the fence.
     var want = Math.max(w, hgt) * r.gait.reach;
     for(var tries = 0; tries < 6; tries++){
       r.tx = r.minX + w * roamRand(r);
@@ -6169,8 +5477,6 @@
       if(Math.sqrt(ax * ax + ay * ay) >= want) break;
     }
     var dx = r.tx - r.x;
-    // A deadzone, because an animal setting off almost straight up should not
-    // turn round for a two-pixel sideways component.
     var want = Math.abs(dx) < 6 ? r.want : (dx < 0 ? -1 : 1);
     if(want !== r.want){
       r.from = r.face;
@@ -6200,8 +5506,6 @@
 
   function stepRoamers(dt){
     if(!roamers.length) return false;
-    // Nothing to do while the Garden tab is not the one being looked at, and
-    // measuring boxes that have no layout is the expensive way to learn that.
     if(els.gardenScene && els.gardenScene.offsetParent === null) return false;
     var live = false;
     for(var i = 0; i < roamers.length; i++){
@@ -6215,9 +5519,6 @@
       } else if(r.state === 'turn'){
         r.t -= dt;
         var p = Math.min(1, Math.max(0, 1 - r.t / r.gait.turn));
-        // Interpolated THROUGH zero, so the body foreshortens as it comes side
-        // on and opens out again facing the other way. Kept off zero by a sliver
-        // because a sprite scaled to exactly nothing vanishes for a frame.
         var f = r.from + (r.want - r.from) * p;
         r.face = Math.abs(f) < 0.12 ? (r.want < 0 ? -0.12 : 0.12) : f;
         if(r.t <= 0){ r.face = r.want; r.state = 'walk'; }
@@ -6238,7 +5539,6 @@
     return live;
   }
 
-  // Re-measured rather than kept: a resize moves every fence.
   function roamRelayout(){
     for(var i = 0; i < roamers.length; i++) roamers[i].ready = false;
   }
@@ -6262,8 +5562,6 @@
 
     els.gardenPlot.className = 'garden-plot plot-field';
     els.gardenPlot.innerHTML = '';
-    // The elements are about to be thrown away; the positions they were at are
-    // kept in roamState and picked up again by the sprites that replace them.
     roamers.length = 0;
 
     for(var p = 0; p < shown; p++){
@@ -6272,9 +5570,6 @@
       parcel.setAttribute('data-parcel', String(p));
 
       if(p >= owned){
-        // Unopened land, with a sign on it and a price. Dimmed and still priced
-        // when it is out of reach — never "you need N more", the same rule the
-        // shop follows, for the same reason.
         var price = parcelPrice(p);
         parcel.className += ' parcel-locked';
         var buy = document.createElement('button');
@@ -6291,16 +5586,11 @@
       }
 
       var family = parcelFamily(items, p);
-      // A pen carries two classes: the generic one so every pen shares its
-      // grass and fence, and the kind so it gets its own building.
       if(family && family.indexOf('pen:') === 0){
         parcel.className += ' parcel-pen parcel-pen-' + family.slice(4);
       } else {
         parcel.className += ' parcel-' + (family || 'meadow');
       }
-      // The building stands at the edge of the parcel, the way a coop or a barn
-      // sits at the edge of a yard — drawn once for the parcel, not once per
-      // animal, because it houses all of them.
       var house = houseFor(family);
       if(house){
         var houseEl = document.createElement('span');
@@ -6309,8 +5599,6 @@
         houseEl.innerHTML = house;
         parcel.appendChild(houseEl);
       }
-      // Marked when what is in hand cannot go here at all, so the whole parcel
-      // reads as not-this-one rather than each plot in it refusing separately.
       if(heldFamily && family && heldFamily !== family){
         parcel.className += ' parcel-wrong';
       }
@@ -6327,8 +5615,6 @@
         slot.setAttribute('data-row', String(row));
         slot.setAttribute('data-col', String(col));
         var it = occupied[row + ':' + col];
-        // An item whose kind is no longer in the shop stays in storage but has
-        // nothing to draw with, so the plot reads as empty for now.
         if(it && !shopItem(it.kind)) it = null;
         if(it){
           slot.classList.add('plot-slot-filled');
@@ -6344,7 +5630,6 @@
           slot.setAttribute('aria-label',
             'Empty plot, land ' + (p + 1) + ' plot ' + (n + 1));
         }
-        // Staggered so the whole farm does not breathe in lockstep.
         slot.style.setProperty('--sway-delay', (-((p * PARCEL_SLOTS + n) % 7) * 0.9) + 's');
         grid.appendChild(slot);
       }
@@ -6353,21 +5638,13 @@
     }
     els.gardenPlot.classList.toggle('plot-armed', !!gardenHeld);
 
-    // The view is a camera on the farmer, not a scrollbar, so rebuilding the
-    // farm never moves it: whatever was on screen stays on screen.
     farmCameraApply();
   }
 
-  // The line on the stage says what you are DOING, and nothing else. The
-  // instructions for how buying works moved into the shop itself — onboarding
-  // text standing permanently over the garden was the thing that made the
-  // screen hard to read, and it is only relevant while the shop is open.
   function renderGardenHint(totals){
     if(!els.gardenHint) return;
     if(gardenHeld && gardenHeld.type === 'buy'){
       var item = shopItem(gardenHeld.kind);
-      // No article: "a oak" is wrong and "an oak" needs a rule this string does
-      // not deserve, so the item name stands on its own.
       els.gardenHint.textContent = 'Holding ' + item.name +
         ' — pick an empty spot to plant it, or press it again to put it back.';
     } else if(gardenHeld && gardenHeld.type === 'move'){
@@ -6380,18 +5657,11 @@
   function renderGarden(focusSessions){
     if(!els.gardenPlot) return;
     var totals = gardenSeedTotals(focusSessions);
-    // The panel covers the whole stage, so the balance has to be legible from
-    // inside it too — otherwise you are shopping blind.
     if(els.gardenShopTokens){
       els.gardenShopTokens.innerHTML = coin(totals.available, 'lg');
       els.gardenShopTokens.setAttribute('aria-label', totals.available +
         (totals.available === 1 ? ' token' : ' tokens'));
     }
-    // The balance and nothing else. What used to sit beside it — how much is
-    // already in the ground — moved into the store panel: a coin can only say
-    // "this is money" if it is not competing with a second number for the same
-    // glance. The coin carries the meaning and the label carries the
-    // accessibility, because a drawing cannot be read out loud.
     els.gardenCount.innerHTML = coin(totals.available, 'lg');
     els.gardenCount.setAttribute('aria-label',
       totals.available + (totals.available === 1 ? ' token' : ' tokens') + ' available');
@@ -6402,33 +5672,29 @@
     roamKick();
   }
 
-  // ---- interaction ----
   function gardenTotalsNow(){
     return gardenSeedTotals(loadSessions().filter(function(s){ return s.type !== 'break'; }));
   }
 
   function holdShopItem(kind){
     if(gardenHeld && gardenHeld.type === 'buy' && gardenHeld.kind === kind){
-      gardenHeld = null;   // pressing the held item again puts it back
+      gardenHeld = null;
     } else {
       var item = shopItem(kind);
       if(!item) return;
-      if(gardenTotalsNow().available < item.price) return;   // silently ignored, never scolded
+      if(gardenTotalsNow().available < item.price) return;
       gardenHeld = { type:'buy', kind: kind };
       setShopOpen(false);
     }
     refreshStats();
   }
 
-  // Land is opened one parcel at a time, in order. Out of order would leave
-  // holes in the farm and stop `parcels` being a single number.
   function buyParcel(index){
     var totals = gardenTotalsNow();
     var g = totals.garden;
     var owned = parcelsOwned(g);
     if(index !== owned || index >= PARCELS_MAX){ refreshStats(); return; }
     var price = parcelPrice(index);
-    // Not enough yet: ignored in silence. Nothing here to have failed at.
     if(totals.available < price){ refreshStats(); return; }
     g.spent += price;
     g.parcels = owned + 1;
@@ -6440,8 +5706,6 @@
     var totals = gardenTotalsNow();
     var g = totals.garden;
 
-    // Nothing happens on land that has not been opened. Land is bought from its
-    // own sign, not by pressing a plot, so there is exactly one way to do it.
     var parcel = parcelOf(row, col);
     if(parcel >= parcelsOwned(g)){ refreshStats(); return; }
 
@@ -6453,9 +5717,6 @@
     if(gardenHeld && gardenHeld.type === 'buy' && !existing){
       var item = shopItem(gardenHeld.kind);
       if(totals.available < item.price){ gardenHeld = null; refreshStats(); return; }
-      // A parcel commits to one family the moment the first thing goes in it, so
-      // a pond fills with fish and a bed fills with crops. Refused in silence,
-      // still holding the item, because a wrong parcel is a miss and not a fault.
       var want = familyOf(item);
       var has = parcelFamily(g.items, parcel);
       if(want && has && want !== has){ refreshStats(); return; }
@@ -6465,8 +5726,6 @@
         col: col,
         row: row,
         plantedAt: nowMs(),
-        // Growth is measured against the work done since this moment, so the
-        // number stored is the pomodoro count at planting, not a timestamp.
         plantedSeeds: totals.earned
       });
       g.spent += item.price;
@@ -6478,9 +5737,6 @@
         if(g.items[m].id === gardenHeld.id){ moving = g.items[m]; break; }
       }
       if(!moving){ gardenHeld = null; refreshStats(); return; }
-      // The same family rule as planting: a cow cannot be walked into the beds.
-      // Judged against the parcel WITHOUT this item in it, so shuffling the last
-      // fish around its own pond is never blocked by itself.
       var others = g.items.filter(function(it){ return it.id !== moving.id; });
       var wantMove = familyOf(shopItem(moving.kind));
       var hasMove = parcelFamily(others, parcel);
@@ -6491,26 +5747,16 @@
       saveGarden(g);
       gardenHeld = null;
     } else if(existing && !gardenHeld && itemRipe(existing, shopItem(existing.kind), totals.earned)){
-      // A ripe thing is harvested by pressing it — the same gesture a farm game
-      // uses, and it needs no extra control. Nothing is consumed: the plant
-      // stays exactly as it is and only its ripening clock restarts.
       var meta = shopItem(existing.kind);
       g.basket[meta.produce] = (g.basket[meta.produce] || 0) +
         ripeFruitCount(existing, meta, totals.earned);
       if(meta.annual){
-        // An annual is lifted with its crop, the way picking a lettuce works.
-        // This is not the garden taking something away: it happens only because
-        // you pressed it, and the produce is always worth more than the item
-        // cost, so a mis-press can never leave you poorer. Nothing is ever
-        // removed by neglect or by time passing.
         g.items = g.items.filter(function(it){ return it.id !== existing.id; });
       } else {
         existing.harvestedSeeds = totals.earned;
       }
       saveGarden(g);
     } else if(existing){
-      // Pressing an unripe planted thing picks it up to move; pressing it again
-      // leaves it where it is. Nothing is ever removed or refunded here.
       gardenHeld = (gardenHeld && gardenHeld.type === 'move' && gardenHeld.id === existing.id)
         ? null : { type:'move', id: existing.id };
     } else {
@@ -6538,10 +5784,6 @@
     refreshStats();
   }
 
-  // What is already planted, in tokens. It reads as an asset rather than a loss
-  // — which is the whole reason it is worth showing at all — and the store is
-  // where somebody goes to look at what they hold, so it belongs here rather
-  // than beside the balance in the HUD.
   function sownLine(totals){
     if(!(totals.spent > 0)) return '';
     return '<p class="store-sown">' + coin(totals.spent) +
@@ -6553,13 +5795,10 @@
     var basket = totals.garden.basket;
     var kinds = Object.keys(basket).filter(function(k){ return basket[k] > 0 && PRODUCE[k]; });
     if(kinds.length === 0){
-      // An empty store says so, rather than vanishing: the building is still
-      // there, and "nothing in it yet" is a different thing from "no store".
       els.gardenBasket.innerHTML = '<p class="basket-empty">Nothing harvested yet. ' +
         'Press anything that is ready and it lands here.</p>' + sownLine(totals);
       return;
     }
-    // Sorted by what the row is worth, so the reason to sell reads top down.
     kinds.sort(function(a, b){
       return (basket[b] * PRODUCE[b].value) - (basket[a] * PRODUCE[a].value);
     });
@@ -6575,16 +5814,11 @@
     els.gardenBasket.innerHTML = html + sownLine(totals);
   }
 
-  // The shop lives inside the scene rather than above it, so it opens and closes
-  // like a panel in a game rather than taking up the page permanently. Picking
-  // something up closes it, because the next thing you do is choose a spot.
   function setShopOpen(open){
     if(!els.gardenShopPanel) return;
     els.gardenShopPanel.hidden = !open;
     if(els.gardenShopToggle) els.gardenShopToggle.setAttribute('aria-expanded', String(open));
     if(els.gardenStage) els.gardenStage.classList.toggle('stage-shopping', open);
-    // It covers the stage, so it behaves like a dialog: focus moves in on open
-    // and back to the button that opened it on close.
     if(open){
       var first = els.gardenShop && els.gardenShop.querySelector('.shop-item');
       if(first) first.focus();
@@ -6594,10 +5828,6 @@
     }
   }
 
-  // The store is the same kind of panel as the shop, for the same reason: it
-  // covers the farm while you are looking at it and gets out of the way after.
-  // The basket used to be a strip pinned across the bottom of the scene, which
-  // meant a bar permanently covering the thing you were building.
   function setStoreOpen(open){
     if(!els.gardenStorePanel) return;
     els.gardenStorePanel.hidden = !open;
@@ -6641,9 +5871,6 @@
         if(e.target.closest('#gardenSellBtn')) sellBasket();
       });
     }
-    // Bound on the WORLD, not on the plot: the two buildings sit in their own
-    // yard element beside the parcels, so a listener on the plot never sees them.
-    // Pressing a building did nothing at all until this moved up a level.
     if(els.gardenWorld){
       els.gardenWorld.addEventListener('click', function(e){
         var building = e.target.closest('[data-building]');
@@ -6661,7 +5888,6 @@
     bindFarmer();
   }
 
-  // Days since the last logged day. -1 when there is no history at all.
   function daysSinceLastPractised(daysWithSessions){
     var dates = Object.keys(daysWithSessions).sort();
     if(dates.length === 0) return -1;
@@ -6670,24 +5896,16 @@
     return Math.round((today - last) / 86400000);
   }
 
-  // Purely factual, never a verdict — no "best streak" to fall short of.
   function describeGap(daysWithSessions){
     var gap = daysSinceLastPractised(daysWithSessions);
-    if(gap < 0) return 'No sessions logged yet';
-    if(gap === 0) return 'Practised today';
+    if(gap < 0) return 'No focus sessions yet';
+    if(gap === 0) return 'Active today';
     if(gap === 1) return 'Last session yesterday';
     return 'Last session ' + gap + ' days ago';
   }
 
-  // The comeback nudge: rewarding the *return* after a lapse was the single
-  // best-performing arm of 54 in the largest habit field experiment run
-  // (+27%), and arms rewarding rigid consistency beat none of the others.
-  // So this speaks up exactly at the moment people usually quit, and frames
-  // the gap as spent rather than owed. Kept visually quiet on purpose:
-  // making a reward signal visually salient flips its effect negative.
   function renderComeback(daysWithSessions){
     if(!els.comeback) return;
-    // Once today's first session is logged the message has done its job.
     if(daysWithSessions[todayKey()]){ els.comeback.hidden = true; return; }
 
     var gap = daysSinceLastPractised(daysWithSessions);
@@ -6708,13 +5926,9 @@
     return h + 'h' + (m > 0 ? ' ' + m + 'm' : '');
   }
 
-  // ---------- custom calendar date picker ----------
-  // Small Google-Calendar-style month popover, used in place of the native
-  // <input type="date"> (which renders inconsistently across browsers/OSes
-  // and can't be styled to match the rest of the app).
   function createDatePicker(rootEl, opts){
     opts = opts || {};
-    var value = opts.value || ''; // 'YYYY-MM-DD', '' = no selection
+    var value = opts.value || '';
     var min = opts.min || '';
     var max = opts.max || '';
     var onChange = opts.onChange || function(){};
@@ -6745,7 +5959,7 @@
     var prevBtn = rootEl.querySelector('.date-picker-prev');
     var nextBtn = rootEl.querySelector('.date-picker-next');
     var todayBtn = rootEl.querySelector('.date-picker-today');
-    var viewYear, viewMonth; // 0-indexed month currently shown in the panel
+    var viewYear, viewMonth;
 
     function pad2(n){ return n < 10 ? '0' + n : String(n); }
     function keyFor(y, m, day){ return y + '-' + pad2(m + 1) + '-' + pad2(day); }
@@ -6760,7 +5974,7 @@
 
     function renderGrid(){
       monthLabel.textContent = MONTH_NAMES[viewMonth] + ' ' + viewYear;
-      var firstIdx = (new Date(viewYear, viewMonth, 1).getDay() + 6) % 7; // Monday = 0
+      var firstIdx = (new Date(viewYear, viewMonth, 1).getDay() + 6) % 7;
       var daysThisMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
       var daysPrevMonth = new Date(viewYear, viewMonth, 0).getDate();
       var totalCells = Math.ceil((firstIdx + daysThisMonth) / 7) * 7;
@@ -6803,7 +6017,6 @@
       renderGrid();
       panel.hidden = false;
       trigger.setAttribute('aria-expanded', 'true');
-      // Lift this popover's card above its siblings — see .card-picker-active.
       if(hostCard) hostCard.classList.add('card-picker-active');
       openDatePicker = api;
     }
@@ -6861,8 +6074,6 @@
     return api;
   }
 
-  // Closes whichever date picker popover is open on any click/Escape that
-  // isn't handled by the picker itself (its own listeners stopPropagation).
   document.addEventListener('click', function(){
     if(openDatePicker) openDatePicker.close();
   });
@@ -6870,17 +6081,13 @@
     if(e.key === 'Escape' && openDatePicker) openDatePicker.close();
   });
 
-  // Inline range calendar for Insights' "Custom" tab. Always visible (no
-  // trigger button): first click sets the start date; while picking the
-  // second, hovering previews the span as a soft band; second click
-  // confirms it. Clicking again after a range is confirmed starts a new one.
   function createRangeDatePicker(rootEl, opts){
     opts = opts || {};
     var from = opts.from || '';
     var to = opts.to || '';
     var max = opts.max || '';
     var onChange = opts.onChange || function(){};
-    var selecting = false; // true once the start date is picked, before the end date is confirmed
+    var selecting = false;
     var hoverDate = null;
 
     rootEl.innerHTML =
@@ -6927,15 +6134,12 @@
 
     function renderGrid(){
       monthLabel.textContent = MONTH_NAMES[viewMonth] + ' ' + viewYear;
-      var firstIdx = (new Date(viewYear, viewMonth, 1).getDay() + 6) % 7; // Monday = 0
+      var firstIdx = (new Date(viewYear, viewMonth, 1).getDay() + 6) % 7;
       var daysThisMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
       var daysPrevMonth = new Date(viewYear, viewMonth, 0).getDate();
       var totalCells = Math.ceil((firstIdx + daysThisMonth) / 7) * 7;
       var todayStr = todayKey();
 
-      // The live end of the span: the confirmed "to" once picked, otherwise
-      // whatever day is currently hovered (falling back to "from" itself,
-      // i.e. a single-day span, until the pointer has moved).
       var liveTo = selecting ? (hoverDate || from) : to;
       var rangeStart = '', rangeEnd = '';
       if(from && liveTo){
@@ -7033,12 +6237,11 @@
     };
   }
 
-  // ---------- today's log (browsable by date, editable, deletable) ----------
   function shiftLogView(deltaDays){
     var d = new Date(logViewDate + 'T00:00:00');
     d.setDate(d.getDate() + deltaDays);
     var next = todayKey(d);
-    if(next > todayKey()) return; // no browsing into the future
+    if(next > todayKey()) return;
     logViewDate = next;
     editingLogId = null;
     refreshStats();
@@ -7058,41 +6261,36 @@
 
   function renderLogForDate(sessions){
     var isToday = logViewDate === todayKey();
-    els.logTitle.textContent = isToday ? "Today's log" : formatDateLabel(logViewDate);
+    els.logTitle.textContent = isToday ? 'Today’s sessions' : 'Sessions · ' + formatDateLabel(logViewDate);
     els.logNextBtn.disabled = isToday;
     logDatePicker.setMax(todayKey());
     logDatePicker.setValue(logViewDate);
 
     var entries = sessions.filter(function(s){ return s.date === logViewDate; });
     entries.sort(function(a,b){ return (b.timestamp||0) - (a.timestamp||0); });
+    var compactCount = 5;
+    els.logExpandBtn.hidden = entries.length <= compactCount;
+    els.logExpandBtn.textContent = logExpanded ? 'Show less' : 'Show all (' + entries.length + ')';
+    els.logExpandBtn.setAttribute('aria-expanded', String(logExpanded));
 
     els.logList.innerHTML = '';
     if(entries.length === 0){
       var empty = document.createElement('p');
       empty.className = 'empty-note';
-      empty.textContent = isToday ? 'No sessions logged yet today.' : 'No sessions logged this day.';
+      empty.textContent = isToday ? 'No sessions yet today.' : 'No sessions on this day.';
       els.logList.appendChild(empty);
-      els.logCountNote.hidden = true;
       return;
     }
-    // Past a handful of entries the compact list starts scrolling — surface
-    // the total + an expand hint instead of leaving it to look truncated.
-    var LOG_COMPACT_THRESHOLD = 5;
-    if(entries.length > LOG_COMPACT_THRESHOLD){
-      els.logCountNote.hidden = false;
-      els.logCountNote.textContent = entries.length + ' sessions logged' + (logExpanded ? '' : ' — expand (⤢) to see them all at once');
-    } else {
-      els.logCountNote.hidden = true;
-    }
     var categories = loadCategories();
-    entries.forEach(function(s){
+    var visibleEntries = logExpanded ? entries : entries.slice(0, compactCount);
+    visibleEntries.forEach(function(s){
       if(s.id === editingLogId){
         var editLi = buildEditRow(s);
         els.logList.appendChild(editLi);
         var catSelect = editLi.querySelector('.edit-category');
         var catCreate = editLi.querySelector('.edit-category-create');
         fillCategorySelectWithNew(catSelect, categories, s.category);
-        wireCategoryPicker(catSelect, catCreate, s.category, function(){ /* Save button reads the value directly */ });
+        wireCategoryPicker(catSelect, catCreate, s.category, function(){   });
       } else {
         els.logList.appendChild(buildLogRow(s));
       }
@@ -7198,10 +6396,6 @@
     ctx.closePath();
   }
 
-  // Runs onFrame(progress) from 0 to 1 over durationMs via requestAnimationFrame
-  // (skips straight to onFrame(1) under prefers-reduced-motion or a 0 duration).
-  // Used to draw canvas charts in with a brief "growing in" motion rather than
-  // popping in fully-drawn on every re-render.
   function animateProgress(durationMs, onFrame, onDone){
     var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if(reduceMotion || durationMs <= 0){
@@ -7220,18 +6414,7 @@
     requestAnimationFrame(step);
   }
 
-  // Stacked bar chart of minutes by hour-of-day (0-23) for the selected range:
-  // focus minutes stacked with break minutes in the same bar, so it's obvious
-  // both when in the day attention actually happens AND whether rest is
-  // actually being taken in proportion to it — a different question than the
-  // heatmap (which day) or the category pie (what). With the "Day" range this
-  // also doubles as a rough within-hour timeline: a 3:00-3:25 pomodoro
-  // followed by a 3:25-3:30 break both land in the "03" bar, so the sliver of
-  // break color on top of it shows the split at a glance.
   var hourAnimToken = 0;
-  // Geometry + per-hour totals from the most recent render, read by the
-  // hover tooltip so it doesn't have to redo the bucketing on every
-  // mousemove. Null whenever there's nothing drawn to hover over.
   var hourChartGeom = null;
 
   function renderHourChart(sessions){
@@ -7314,7 +6497,6 @@
 
         ctx.globalAlpha = alpha;
         if(focusBuckets[j] > 0 || !hasData){
-          // Flat top when a break segment sits above it, rounded when it's alone.
           ctx.fillStyle = accent;
           var focusRadius = breakBuckets[j] > 0 ? 0 : r;
           roundRectTop(ctx, x, focusTopY, barW, Math.max(focusH, 2), focusRadius);
@@ -7337,22 +6519,18 @@
     }
 
     animateProgress(450, function(p){
-      if(myToken !== hourAnimToken) return; // a newer render superseded this one
+      if(myToken !== hourAnimToken) return;
       draw(p);
     });
 
     function fmt(h){ return String(h).padStart(2, '0') + ':00'; }
-    var breakTotal = breakBuckets.reduce(function(a, b){ return a + b; }, 0);
-    els.peakHourNote.textContent = 'Peak focus hours: ' + fmt(maxIdx) + '–' + fmt((maxIdx + 1) % 24) +
-      '. Rest logged: ' + breakTotal + ' min in this period.';
+    els.peakHourNote.textContent = 'Peak focus: ' + fmt(maxIdx) + '–' + fmt((maxIdx + 1) % 24);
   }
 
   function hideHourChartTooltip(){
     if(els.hourChartTooltip) els.hourChartTooltip.hidden = true;
   }
 
-  // Hovering a bar shows exactly how many focus/break minutes it holds —
-  // the bar height alone only gives a rough sense of that.
   function handleHourChartHover(evt){
     if(!hourChartGeom){ hideHourChartTooltip(); return; }
     var g = hourChartGeom;
@@ -7382,33 +6560,9 @@
     els.hourChart.addEventListener('mouseleave', hideHourChartTooltip);
   }
 
-  // ---------- Insights: focus by category over time ----------
-  // Line chart, one line per category, for the same range as the other two
-  // Insights charts. The x-axis is a run of equal time buckets whose size
-  // follows the tab — hours for Day, days for Week/Month, months for Year
-  // and All time — so the same chart answers "when this week did I do
-  // English?" and "is Learning trending up this year?" without a separate
-  // widget for each. Buckets with nothing logged draw at 0 rather than as a
-  // gap, so rest days are visible as dips instead of vanishing.
-  //
-  // Many categories: every one gets a line, but only the TREND_COLORED
-  // biggest are drawn in their category hue — the rest are thin grey context
-  // (the standard "focus + context" answer to a spaghetti chart). Hovering a
-  // grey line lights it up and names it; the legend lists the coloured ones
-  // and folds the grey ones behind a "+N more" toggle.
-  //
-  // Two overlays sit on top of the category lines:
-  // - A dashed horizontal *average* line in the neutral ink color (never a
-  //   category hue, so it can't be mistaken for a series). It's the mean
-  //   total per bucket over the buckets that have already started — future
-  //   days of the current month don't drag it down. Selecting a category
-  //   turns it into that category's own average.
-  // - Clicking a legend chip or a line *selects* that category: it draws on
-  //   top at full strength while the others fade, and the tooltip leads
-  //   with it. Click again, or click empty canvas, to clear.
   var TREND_DAY_NAMES = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-  var TREND_COLORED = 5; // categories drawn in colour; the rest are grey context
-  var trendSelected = null; // category name currently highlighted, or null for all
+  var TREND_COLORED = 5;
+  var trendSelected = null;
 
   function addDays(d, n){
     var out = new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -7423,10 +6577,6 @@
     return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
   }
 
-  // Describes the x-axis for a range: the ordered bucket keys, the label
-  // shown under each ('' leaves it unlabelled), a longer label for the
-  // tooltip, a per-session key function, the unit word for the title, and
-  // how many buckets have started as of now (for the average).
   function trendAxis(range, sessions, allSessions){
     var today = new Date();
     var todayK = todayKey(today);
@@ -7471,7 +6621,7 @@
     }
     function weekly(from, to){
       unit = 'per week';
-      var cursor = addDays(from, -((from.getDay() + 6) % 7)); // back to Monday
+      var cursor = addDays(from, -((from.getDay() + 6) % 7));
       var i = 0;
       while(cursor <= to){
         var wkKey = todayKey(cursor);
@@ -7490,8 +6640,6 @@
     }
 
     if(range === 'day'){
-      // Not used by the panel any more (Day shows a timeline instead), but
-      // kept so the axis description stays complete for every range.
       unit = 'per hour';
       var nowH = today.getHours();
       for(var h = 0; h < 24; h++){
@@ -7500,8 +6648,6 @@
         labels.push(h % 4 === 0 ? String(h).padStart(2, '0') : '');
         titles.push(String(h).padStart(2, '0') + ':00–' + String((h + 1) % 24).padStart(2, '0') + ':00');
       }
-      // Sessions predate the timestamp field in very old backups; those
-      // can't be placed within the day, so they fall out of this view only.
       keyOf = function(s){ return s.timestamp ? String(new Date(s.timestamp).getHours()) : null; };
     } else if(range === 'week'){
       var wk = weekBounds(today);
@@ -7517,7 +6663,6 @@
     } else if(range === 'custom'){
       var fromKey = customRangeFrom, toKey = customRangeTo;
       if(!fromKey || !toKey){
-        // An open-ended side falls back to the edge of the logged data.
         var dates = allSessions.map(function(s){ return s.date; }).sort();
         if(!fromKey) fromKey = dates[0] || todayK;
         if(!toKey) toKey = dates[dates.length - 1] || todayK;
@@ -7529,7 +6674,6 @@
       else if(spanDays <= 190) weekly(f, t);
       else monthly(f, t);
     } else {
-      // All time: from the first logged month through the current one.
       var earliest = null;
       allSessions.forEach(function(s){ if(!earliest || s.date < earliest) earliest = s.date; });
       var startM = earliest ? parseDateKey(earliest) : today;
@@ -7539,8 +6683,6 @@
     return { keys: keys, labels: labels, titles: titles, keyOf: keyOf, unit: unit, elapsed: Math.max(1, elapsed) };
   }
 
-  // Picks a y-axis top that the four gridlines divide into whole, readable
-  // minute values (e.g. 60 → 15/30/45/60, 240 → 60/120/180/240).
   function trendNiceMax(maxMinutes){
     var steps = [20, 40, 60, 120, 180, 240, 360, 480, 600, 720, 960, 1200, 1440, 1800, 2400, 3000, 3600, 4800, 6000, 7200, 9600, 12000];
     for(var i = 0; i < steps.length; i++){ if(steps[i] >= maxMinutes) return steps[i]; }
@@ -7551,15 +6693,6 @@
     return formatDuration(Math.round(min));
   }
 
-  // ---------- Day range: today's timeline ----------
-  // A line-per-category chart of one day is just spikes (a 25-minute
-  // pomodoro is 0 → 25m → 0 across three hourly buckets) and duplicates the
-  // hour chart above it, so the Day tab swaps the trend panel for a
-  // timeline instead: one row per category, midnight to midnight across,
-  // each focus session drawn as a block at its real clock time and length.
-  // That answers the question a single day actually raises — what did I
-  // work on, when, and for how long — and the same legend/selection
-  // behaviour carries over so the panel doesn't feel like a different tool.
   var TIMELINE_ROW_H = 26;
   var TIMELINE_AXIS_H = 20;
   var TIMELINE_LABEL_W = 96;
@@ -7576,12 +6709,9 @@
     var dayStartMs = dayStart.getTime();
     var dayEndMs = dayStartMs + 86400000;
 
-    // Group sessions into blocks per category. `timestamp` is when the
-    // session finished, so the block runs backwards from it; one that
-    // started before midnight is clipped to the day.
     var byCat = {};
     sessions.forEach(function(s){
-      if(!s.timestamp) return; // very old backups lack it; nothing to place
+      if(!s.timestamp) return;
       var endMs = Math.min(s.timestamp, dayEndMs);
       var startMs = Math.max(endMs - s.minutes * 60000, dayStartMs);
       if(!byCat[s.category]) byCat[s.category] = { total: 0, blocks: [] };
@@ -7592,15 +6722,13 @@
       return { name: name, total: byCat[name].total, blocks: byCat[name].blocks, colorIndex: categoryColorIndex(name), colored: true };
     });
     rows.sort(function(a, b){ return b.total - a.total; });
-    // No "Other" folding here, unlike the line chart: each row is named at
-    // the left, so identity never rests on the 8-hue palette, and a single
-    // day rarely touches more than a handful of categories anyway.
 
     if(trendSelected !== null && !rows.some(function(r){ return r.name === trendSelected; })) trendSelected = null;
     var selIdx = -1;
     rows.forEach(function(r, i){ if(r.name === trendSelected) selIdx = i; });
 
-    els.trendTitle.textContent = "Focus by category · today's timeline";
+    els.trendTitle.textContent = 'Today’s timeline';
+    canvas.setAttribute('aria-label', 'Today’s focus sessions by category and time');
 
     var css = getComputedStyle(document.documentElement);
     var lineColor = css.getPropertyValue('--line').trim();
@@ -7633,7 +6761,6 @@
 
     renderTrendLegend(rows, colors, selIdx, 0, '', '');
 
-    // Hit targets for hover/click, filled in by draw().
     var hits = [];
     var geom = { mode: 'timeline', rows: rows, colors: colors, hits: hits, padL: padL, padT: padT, rowH: TIMELINE_ROW_H, axisY: axisY, cssW: cssW, cssH: cssH, selIdx: selIdx };
     trendChartGeom = geom;
@@ -7678,7 +6805,6 @@
         var dim = selIdx >= 0 && ri !== selIdx;
         ctx.globalAlpha = dim ? 0.3 : 1;
 
-        // Row label in text ink; the block colour carries identity.
         ctx.fillStyle = ri === selIdx ? ink : inkSoft;
         ctx.font = (ri === selIdx ? '600 ' : '') + '10px "Work Sans", sans-serif';
         ctx.textAlign = 'left';
@@ -7715,8 +6841,6 @@
         ctx.globalAlpha = 1;
       });
 
-      // "Now" marker, so the empty stretch to the right reads as "not yet"
-      // rather than "nothing".
       var nowX = Math.round(xAt(Math.min(nowMs(), dayEndMs))) + 0.5;
       ctx.strokeStyle = accent;
       ctx.lineWidth = 1;
@@ -7731,7 +6855,7 @@
 
     if(rows.length === 0){
       draw(1, null);
-      els.trendNote.textContent = 'No focus sessions logged today.';
+      els.trendNote.textContent = 'No focus sessions yet today.';
       hideTrendChartTooltip();
       return;
     }
@@ -7752,13 +6876,10 @@
       });
     });
     var sessionsWord = count === 1 ? 'session' : 'sessions';
-    if(selIdx >= 0){
-      els.trendNote.textContent = rows[selIdx].name + ': ' + count + ' ' + sessionsWord + ' today, ' + formatDuration(total) +
-        ', from ' + fmtClock(first) + ' to ' + fmtClock(last) + '. Click it again to show every category.';
-    } else {
-      els.trendNote.textContent = count + ' ' + sessionsWord + ' today, ' + formatDuration(total) + ' in total, from ' +
-        fmtClock(first) + ' to ' + fmtClock(last) + '. Hover a block for the task; click a category to focus on it.';
-    }
+    renderTrendSummary([
+      (selIdx >= 0 ? rows[selIdx].name + ' · ' : '') + count + ' ' + sessionsWord + ' · ' + formatDuration(total),
+      fmtClock(first) + '–' + fmtClock(last)
+    ]);
   }
 
   function timelineHitAt(g, x, y){
@@ -7788,7 +6909,6 @@
     var rowIdx = -1;
     if(hit) rowIdx = hit.row;
     else if(evt.offsetX < g.padL){
-      // Clicking a row label selects that row too.
       var ri = Math.floor((evt.offsetY - g.padT) / g.rowH);
       if(ri >= 0 && ri < g.rows.length) rowIdx = ri;
     }
@@ -7797,24 +6917,19 @@
   }
 
   var trendAnimToken = 0;
-  var trendChartGeom = null; // geometry + series from the last render, for hover/click
-  var trendMoreOpen = false; // whether the legend's "+N more" list is expanded
+  var trendChartGeom = null;
+  var trendMoreOpen = false;
 
   function renderCategoryTrend(sessions, allSessions){
     var canvas = els.categoryTrendChart;
     if(!canvas) return;
     if(categoryRange === 'day'){ renderDayTimeline(sessions); return; }
-    canvas.style.height = ''; // the timeline sizes itself per row; the line chart uses the stylesheet height
+    canvas.style.height = '';
     var axis = trendAxis(categoryRange, sessions, allSessions || sessions);
     var n = axis.keys.length;
     var idxOf = {};
     axis.keys.forEach(function(k, i){ idxOf[k] = i; });
 
-    // Bucket minutes per category and rank by total. Every category gets a
-    // line; only the top few get a colour (focus + context): the rest draw
-    // as thin grey so the overall shape and the count stay visible without
-    // turning the chart into spaghetti, and any of them lights up on hover
-    // or click. This also sidesteps the 8-hue palette running out.
     var byCat = {};
     sessions.forEach(function(s){
       var k = axis.keyOf(s);
@@ -7827,9 +6942,6 @@
       return { name: name, total: byCat[name].total, values: byCat[name].values, colorIndex: categoryColorIndex(name) };
     });
     series.sort(function(a, b){ return b.total - a.total; });
-    // Hues follow the category (same as its chip everywhere else), so two
-    // of the coloured five can still hash to the same one; the smaller of
-    // the pair draws with long dashes so they stay tellable apart.
     var seenHue = {};
     series.forEach(function(sr, i){
       sr.colored = i < TREND_COLORED;
@@ -7837,7 +6949,6 @@
       if(sr.colored) seenHue[sr.colorIndex] = true;
     });
 
-    // A selection only survives while that category is still on the chart.
     if(trendSelected !== null && !series.some(function(sr){ return sr.name === trendSelected; })) trendSelected = null;
     var selIdx = -1;
     series.forEach(function(sr, i){ if(sr.name === trendSelected) selIdx = i; });
@@ -7848,13 +6959,12 @@
       sr.values.forEach(function(v, i){ totals[i] += v; if(v > maxVal) maxVal = v; });
     });
     var grand = totals.reduce(function(a, b){ return a + b; }, 0);
-    // The average follows the selection: all categories together, or just
-    // the highlighted one.
     var avgBase = selIdx >= 0 ? series[selIdx].total : grand;
     var avg = avgBase / axis.elapsed;
     var avgLabel = selIdx >= 0 ? series[selIdx].name + ' average' : 'Average, all categories';
 
-    els.trendTitle.textContent = 'Focus by category over time · ' + axis.unit;
+    els.trendTitle.textContent = 'Focus by category';
+    canvas.setAttribute('aria-label', 'Focus minutes by category ' + axis.unit);
 
     var dpr = window.devicePixelRatio || 1;
     var cssW = canvas.clientWidth || 600;
@@ -7874,7 +6984,6 @@
     var ink = css.getPropertyValue('--ink').trim();
     var inkSoft = css.getPropertyValue('--ink-soft').trim();
     var paperRaised = css.getPropertyValue('--paper-raised').trim();
-    // Every series knows its own hue; the grey ones only use it when lit.
     var hues = series.map(function(sr){
       return css.getPropertyValue('--catclr-' + sr.colorIndex + '-fg').trim();
     });
@@ -7884,9 +6993,6 @@
     var plotH = cssH - padT - padB;
     var baseY = padT + plotH;
     var stepX = n > 1 ? plotW / (n - 1) : 0;
-    // Lines stop at the current bucket: a day that hasn't happened yet isn't
-    // a day with zero focus, so the axis runs to the end of the period but
-    // the plot doesn't.
     var drawn = Math.min(n, axis.elapsed);
     function xAt(i){ return n > 1 ? padL + i * stepX : padL + plotW / 2; }
 
@@ -7916,21 +7022,43 @@
 
     function tracePath(sr, progress){
       ctx.beginPath();
+      var points = [];
       for(var i = 0; i < drawn; i++){
-        var y = baseY - (sr.values[i] / yMax) * plotH * progress;
-        if(i === 0) ctx.moveTo(xAt(i), y); else ctx.lineTo(xAt(i), y);
+        points.push({ x: xAt(i), y: baseY - (sr.values[i] / yMax) * plotH * progress });
       }
-      if(drawn === 1){ ctx.arc(xAt(0), baseY - (sr.values[0] / yMax) * plotH * progress, 3, 0, Math.PI * 2); }
+      if(points.length === 1){
+        ctx.arc(points[0].x, points[0].y, 3, 0, Math.PI * 2);
+        return;
+      }
+      ctx.moveTo(points[0].x, points[0].y);
+      var slopes = points.map(function(point, i){
+        if(i === 0) return (points[1].y - point.y) / (points[1].x - point.x);
+        if(i === points.length - 1) return (point.y - points[i - 1].y) / (point.x - points[i - 1].x);
+        var previous = (point.y - points[i - 1].y) / (point.x - points[i - 1].x);
+        var next = (points[i + 1].y - point.y) / (points[i + 1].x - point.x);
+        if(previous * next <= 0) return 0;
+        return (2 * previous * next) / (previous + next);
+      });
+      for(var j = 0; j < points.length - 1; j++){
+        var current = points[j];
+        var nextPoint = points[j + 1];
+        var controlDistance = (nextPoint.x - current.x) / 3;
+        ctx.bezierCurveTo(
+          current.x + controlDistance,
+          current.y + slopes[j] * controlDistance,
+          nextPoint.x - controlDistance,
+          nextPoint.y - slopes[j + 1] * controlDistance,
+          nextPoint.x,
+          nextPoint.y
+        );
+      }
     }
 
-    // hoverIdx: bucket under the cursor (or null); litIdx: series under the
-    // cursor, lit in its own hue for as long as the pointer rests on it.
     function draw(progress, hoverIdx, litIdx){
       ctx.clearRect(0, 0, cssW, cssH);
       var hasHover = hoverIdx !== null && hoverIdx !== undefined;
       var lit = (litIdx !== null && litIdx !== undefined) ? litIdx : -1;
 
-      // Recessive grid: four horizontal rules with their values at the left.
       ctx.strokeStyle = lineColor;
       ctx.lineWidth = 1;
       ctx.fillStyle = inkSoft;
@@ -7963,8 +7091,6 @@
 
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
-      // Draw order: grey context first, coloured lines next, then whatever
-      // is selected or lit on top. With a selection everything else fades.
       var order = [];
       series.forEach(function(sr, si){ if(!sr.colored && si !== selIdx && si !== lit) order.push(si); });
       series.forEach(function(sr, si){ if(sr.colored && si !== selIdx && si !== lit) order.push(si); });
@@ -7998,8 +7124,20 @@
       });
       ctx.globalAlpha = 1;
 
-      // Average: long dashes in neutral ink, with its value tagged at the
-      // right end where no series label competes for the space.
+      order.forEach(function(si){
+        var sr = series[si];
+        var isTop = si === selIdx || si === lit;
+        var isVisible = isTop || selIdx < 0 || sr.colored;
+        ctx.globalAlpha = isTop || sr.colored ? 1 : 0.35;
+        ctx.fillStyle = sr.colored || isTop ? hues[si] : inkSoft;
+        for(var markerIdx = 0; markerIdx < drawn; markerIdx++){
+          ctx.beginPath();
+          ctx.arc(xAt(markerIdx), yAt(sr.values[markerIdx]) * progress + baseY * (1 - progress), isTop ? 3 : (isVisible ? 2.25 : 1.5), 0, Math.PI * 2);
+          ctx.fill();
+        }
+      });
+      ctx.globalAlpha = 1;
+
       if(avg > 0){
         var ay = Math.round(yAt(avg * progress)) + 0.5;
         ctx.strokeStyle = ink;
@@ -8026,8 +7164,6 @@
         ctx.textBaseline = 'alphabetic';
       }
 
-      // Hovered bucket: a ringed marker on each line that's currently
-      // readable (coloured ones, or just the selected/lit one).
       if(hasHover){
         series.forEach(function(sr, si){
           var visible = selIdx >= 0 ? si === selIdx : (sr.colored || si === lit);
@@ -8041,8 +7177,6 @@
           ctx.strokeStyle = paperRaised;
           ctx.stroke();
         });
-        // A lit grey line gets its name beside the marker, since it has no
-        // legend chip of its own on show.
         if(lit >= 0 && !series[lit].colored && lit !== selIdx){
           var lx = xAt(hoverIdx), ly = yAt(series[lit].values[hoverIdx]);
           ctx.font = '600 10px "Work Sans", sans-serif';
@@ -8067,35 +7201,49 @@
       draw(p, null, null);
     });
 
-    // Summary line: where the peak landed and who led the period. With a
-    // selection, it talks about that category alone.
     var peakIdx = 0;
     if(selIdx >= 0){
       var vals = series[selIdx].values;
       for(var i = 1; i < n; i++){ if(vals[i] > vals[peakIdx]) peakIdx = i; }
       var selShare = grand > 0 ? Math.round((series[selIdx].total / grand) * 100) : 0;
-      els.trendNote.textContent = series[selIdx].name + ': ' + formatDuration(series[selIdx].total) + ' in this period (' + selShare +
-        '% of focus time), peaking ' + axis.titles[peakIdx] + ' with ' + formatDuration(vals[peakIdx]) + '. Click it again to show every category.';
+      renderTrendSummary([
+        series[selIdx].name + ' · ' + formatDuration(series[selIdx].total) + ' · ' + selShare + '%',
+        'Peak: ' + trendBucketLabel(axis, peakIdx) + ' · ' + formatDuration(vals[peakIdx])
+      ]);
     } else {
       for(var j = 1; j < n; j++){ if(totals[j] > totals[peakIdx]) peakIdx = j; }
       var lead = series[0];
       var share = grand > 0 ? Math.round((lead.total / grand) * 100) : 0;
-      var greyCount = series.length - Math.min(series.length, TREND_COLORED);
-      els.trendNote.textContent = 'Peak: ' + axis.titles[peakIdx] + ' with ' + formatDuration(totals[peakIdx]) +
-        '. ' + lead.name + ' leads this period at ' + share + '% of focus time.' +
-        (greyCount > 0 ? ' The top ' + TREND_COLORED + ' categories are in colour; hover a grey line to see which it is, or click any to focus on it.' : ' Click a category to focus on it.');
+      renderTrendSummary([
+        'Peak: ' + trendBucketLabel(axis, peakIdx) + ' · ' + formatDuration(totals[peakIdx]),
+        'Top category: ' + lead.name + ' · ' + share + '%'
+      ]);
     }
   }
 
-  // jsdom's canvas stub has no measureText; fall back to a rough width.
+  function renderTrendSummary(parts){
+    els.trendNote.replaceChildren();
+    parts.forEach(function(text){
+      var item = document.createElement('span');
+      item.textContent = text;
+      els.trendNote.appendChild(item);
+    });
+  }
+
+  function trendBucketLabel(axis, index){
+    var key = axis.keys[index];
+    var monthly = key.length === 7;
+    var date = parseDateKey(monthly ? key + '-01' : key);
+    var label = MONTH_NAMES[date.getMonth()] + (monthly ? '' : ' ' + date.getDate());
+    if(date.getFullYear() !== new Date().getFullYear()) label += ', ' + date.getFullYear();
+    return (axis.unit === 'per week' ? 'Week of ' : '') + label;
+  }
+
   function trendTextWidth(ctx, text){
     var measured = typeof ctx.measureText === 'function' ? ctx.measureText(text) : null;
     return (measured && measured.width) || text.length * 5;
   }
 
-  // Legend: a chip per coloured category (plus the selected one, if it's a
-  // grey line), then a "+N more" toggle that unfolds the grey ones so any
-  // of them can be picked, and the average with its own dashed swatch.
   function renderTrendLegend(series, hues, selIdx, avg, avgLabel, unit){
     var legend = els.trendLegend;
     legend.innerHTML = '';
@@ -8121,6 +7269,14 @@
     }
 
     main.forEach(function(i){ legend.appendChild(chip(i)); });
+    if(selIdx >= 0){
+      var showAll = document.createElement('button');
+      showAll.type = 'button';
+      showAll.className = 'hour-legend-item trend-legend-item trend-show-all';
+      showAll.textContent = 'Show all';
+      showAll.setAttribute('aria-label', 'Show all categories');
+      legend.appendChild(showAll);
+    }
 
     if(more.length > 0){
       var toggle = document.createElement('button');
@@ -8165,8 +7321,6 @@
     return Math.max(0, Math.min(g.n - 1, idx));
   }
 
-  // The series whose point at bucket idx is nearest the cursor, if any is
-  // within reach. Coloured, selected and grey lines all count.
   function trendSeriesNear(g, idx, y, reach){
     var best = -1, bestDist = reach;
     g.series.forEach(function(sr, si){
@@ -8176,9 +7330,6 @@
     return best;
   }
 
-  // Hovering anywhere on the plot snaps to the nearest bucket and lists the
-  // readable categories' minutes there — the lines alone only show shape.
-  // Resting on a grey line lights it up and names it.
   function handleTrendChartHover(evt){
     if(!trendChartGeom){ hideTrendChartTooltip(); return; }
     var g = trendChartGeom;
@@ -8189,8 +7340,6 @@
     if(idx >= g.drawn){ hideTrendChartTooltip(); return; }
     var lit = trendSeriesNear(g, idx, evt.offsetY, 14);
 
-    // Rows: the selected/lit one first, then the coloured ones, then a
-    // single line for everything grey so the bubble stays short.
     var rows = [];
     var greyTotal = 0, greyCount = 0;
     var lead = g.selIdx >= 0 ? g.selIdx : lit;
@@ -8213,7 +7362,6 @@
     tip.innerHTML = '<strong>' + escapeHtml(g.axis.titles[idx]) + '</strong>' +
       (g.totals[idx] > 0 ? ' <span class="tt-total">' + formatDuration(g.totals[idx]) + '</span>' : '') +
       '<br>' + html.join('<br>');
-    // Keep the bubble inside the canvas near either edge.
     var left = g.xAt(idx);
     var half = Math.min(110, g.cssW / 2);
     left = Math.max(half, Math.min(g.cssW - half, left));
@@ -8222,7 +7370,6 @@
     g.draw(1, idx, lit >= 0 ? lit : null);
   }
 
-  // Clicking near a line selects that category; clicking empty plot clears.
   function handleTrendChartClick(evt){
     if(!trendChartGeom) return;
     var g = trendChartGeom;
@@ -8241,20 +7388,32 @@
     els.categoryTrendChart.addEventListener('mouseleave', hideTrendChartTooltip);
     els.categoryTrendChart.addEventListener('click', handleTrendChartClick);
     els.trendLegend.addEventListener('click', function(e){
+      if(e.target.closest('.trend-show-all')){
+        trendSelected = null;
+        renderInsights(loadSessions());
+        var firstChip = els.trendLegend.querySelector('[data-category]');
+        if(firstChip) firstChip.focus({preventScroll: true});
+        return;
+      }
       var more = e.target.closest('.trend-legend-more');
       if(more){
         trendMoreOpen = !trendMoreOpen;
         renderInsights(loadSessions());
+        els.trendLegend.querySelector('.trend-legend-more').focus({preventScroll: true});
         return;
       }
       var btn = e.target.closest('.trend-legend-item[data-category]');
       if(!btn) return;
       setTrendSelection(btn.dataset.category);
+      var chips = els.trendLegend.querySelectorAll('[data-category]');
+      var focusTarget = els.trendLegend.querySelector('.trend-legend-more');
+      for(var i = 0; i < chips.length; i++){
+        if(chips[i].dataset.category === btn.dataset.category) focusTarget = chips[i];
+      }
+      if(focusTarget) focusTarget.focus({preventScroll: true});
     });
   }
 
-  // Monday-start week containing `d`, as ['YYYY-MM-DD' from, 'YYYY-MM-DD' to].
-  // Monday-first matches the calendar pickers elsewhere in the app.
   function weekBounds(d){
     d = d || new Date();
     var start = new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -8264,9 +7423,6 @@
     return [todayKey(start), todayKey(end)];
   }
 
-  // Filters sessions down to the period the Insights tabs ask for. 'day' =
-  // today, 'week' = this Monday–Sunday week, 'month' = this calendar month,
-  // 'year' = this calendar year, 'all' = everything ever logged.
   function sessionsInRange(sessions, range){
     if(range === 'day'){
       var todayD = todayKey();
@@ -8285,8 +7441,6 @@
       return sessions.filter(function(s){ return s.date.slice(0, 4) === y; });
     }
     if(range === 'custom'){
-      // An empty bound is unset, so treat it as open-ended on that side
-      // rather than excluding everything.
       var from = customRangeFrom || '0000-00-00';
       var to = customRangeTo || '9999-99-99';
       return sessions.filter(function(s){ return s.date >= from && s.date <= to; });
@@ -8294,22 +7448,14 @@
     return sessions;
   }
 
-  // All three charts read the same range-filtered slice, so "By category",
-  // "By hour of day" and the category trend always agree on what period
-  // they're describing.
   function renderInsights(sessions){
     var filtered = sessionsInRange(sessions, categoryRange);
-    // Category breakdown is about focus work only; the hour-of-day chart
-    // wants both focus and break minutes to show the split.
     var focusOnly = filtered.filter(function(s){ return s.type !== 'break'; });
     renderCategoryPie(focusOnly);
     renderHourChart(filtered);
     renderCategoryTrend(focusOnly, sessions);
   }
 
-  // Donut chart of focus minutes by category for the selected range, so it's
-  // obvious at a glance where attention has actually gone. Wedge colors reuse
-  // the same category hash as the chip color everywhere else in the app.
   var pieAnimToken = 0;
 
   function renderCategoryPie(sessions){
@@ -8364,8 +7510,6 @@
         .getPropertyValue('--catclr-' + categoryColorIndex(r.name) + '-fg').trim();
     });
 
-    // Sweeps the whole donut clockwise from 12 o'clock as progress goes
-    // 0 -> 1, instead of popping in fully drawn on every render.
     function draw(progress){
       ctx.clearRect(0, 0, cssSize, cssSize);
       var start = -Math.PI / 2;
@@ -8387,7 +7531,6 @@
         covered += fullSweep;
       });
 
-      // punch the donut hole
       ctx.fillStyle = paperRaised;
       ctx.beginPath();
       ctx.arc(cx, cy, rInner, 0, Math.PI * 2);
@@ -8403,7 +7546,7 @@
     }
 
     animateProgress(450, function(p){
-      if(myToken !== pieAnimToken) return; // a newer render superseded this one
+      if(myToken !== pieAnimToken) return;
       draw(p);
     });
 
@@ -8429,7 +7572,6 @@
     return String(str).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
 
-  // ---------- backup: export / import ----------
   function buildBackupData(){
     return {
       app: 'pomodoro-bench',
@@ -8440,33 +7582,15 @@
       categories: loadCategories(),
       presets: loadCustomPresets(),
       skillMarks: loadSkillMarks(),
-      // The farm, which used to be the one thing a backup left behind. It is
-      // months of work made visible — land bought, animals raised from newborn,
-      // a basket half full — and it lived in localStorage only, so switching
-      // device or restoring a backup wiped it while every session survived.
       garden: loadGarden()
     };
   }
 
-  // The stamp `done` is settled by. A copy from before the stamp existed
-  // borrows its doneAt when finished, and counts as 0 (never ticked) when
-  // not — so a real tick on any device beats a legacy not-done.
   function doneStampOf(t){
     if(typeof t.doneChangedAt === 'number') return t.doneChangedAt;
     return (t.done && typeof t.doneAt === 'number') ? t.doneAt : 0;
   }
 
-  // Merges an incoming backup object (from a file import or a remote sync
-  // pull) into local storage — never deletes anything locally. Sessions,
-  // categories and presets are additive by id only (an id already present
-  // locally is left untouched). Tasks are additive-by-id *plus*
-  // last-write-wins on a shared id: whichever side's `updatedAt` is newer
-  // overwrites the other's fields, so a rename/edit made on one device
-  // reaches another that already has that same task. `done` is settled
-  // separately by its own stamp (doneChangedAt), so a tick is never lost to
-  // an unrelated edit — see the task loop below. Returns how much was
-  // newly added (and, for tasks, updated), or throws on an unrecognized
-  // shape. Shared by the file-import handler and js/sync.js.
   function applyIncomingBackup(data){
     var incomingSessions = Array.isArray(data) ? data : (data && Array.isArray(data.sessions) ? data.sessions : []);
     var incomingTasks = (data && Array.isArray(data.tasks)) ? data.tasks : [];
@@ -8500,8 +7624,6 @@
         timestamp: s.timestamp || nowMs(),
         status: s.status === 'skipped' ? 'skipped' : 'completed',
         type: s.type === 'break' ? 'break' : 'focus',
-        // This whitelist drops anything not named here, so new session fields
-        // have to be added or they vanish on the next sync or import.
         intention: typeof s.intention === 'string' ? s.intention : null,
         quality: typeof s.quality === 'string' ? s.quality : null
       });
@@ -8518,18 +7640,11 @@
     incomingTasks.forEach(function(t){
       if(!t || !t.name) return;
       var id = t.id || generateId();
-      // Older backups/remote docs predate this stamp — fall back to
-      // createdAt so an old snapshot never outranks a real edit made since.
       var incomingUpdatedAt = typeof t.updatedAt === 'number' ? t.updatedAt : (t.createdAt || 0);
       var incomingDoneChangedAt = doneStampOf(t);
       var existing = taskById[id];
       if(existing){
         var changed = false;
-        // Ids are shared by both sides, so this is the same task edited on
-        // two devices — take whichever copy changed more recently instead
-        // of always keeping local (which used to mean a rename/etc. made
-        // elsewhere would never show up here). Ties keep the local copy:
-        // nothing to gain by overwriting with an identical stamp.
         if(incomingUpdatedAt > (existing.updatedAt || 0)){
           existing.name = t.name;
           existing.category = t.category || 'Uncategorized';
@@ -8542,14 +7657,6 @@
           existing.updatedAt = incomingUpdatedAt;
           changed = true;
         }
-        // `done` rides on its own stamp, not on updatedAt. Before this,
-        // one pomodoro counted here (which bumps updatedAt) was enough to
-        // make this copy "newer", so a tick made on the other device never
-        // arrived — and worse, this copy's push then un-ticked it there.
-        // Now only a later flip of `done` itself can beat an earlier one.
-        // The tie case is the one-time bridge for tasks ticked before the
-        // stamp existed: both sides sit at the same value, so a done at a
-        // tie is adopted, but a not-done never un-finishes anything.
         var existingDoneChangedAt = doneStampOf(existing);
         var doneWins = incomingDoneChangedAt > existingDoneChangedAt ||
           (incomingDoneChangedAt === existingDoneChangedAt && !!t.done && !existing.done);
@@ -8584,7 +7691,6 @@
       touchedTasks.push(created);
     });
     saveTasks(currentTasks);
-    // Whatever this merge added or changed is a change to the store too.
     touchedTasks.forEach(function(t){ forwardTaskOp({type:'set', id: t.id, task: t}); });
     reconcileActiveTask(currentTasks);
 
@@ -8600,8 +7706,6 @@
     fillCategorySelectWithNew(els.newTaskCategory, currentCategories, els.newTaskCategory.value);
     updateCategoryFormAvailability();
 
-    // Custom session types, merged by id like everything else. Built-in ids
-    // are skipped so an older backup can never shadow a built-in preset.
     var incomingPresets = (data && Array.isArray(data.presets)) ? data.presets : [];
     var currentPresets = loadCustomPresets();
     var presetIds = {};
@@ -8630,27 +7734,15 @@
     mergeIncomingGarden(data && data.garden);
 
     renderTasks();
-    // Also redraws the garden: renderGarden runs from refreshStats.
     refreshStats();
 
     return {addedSessions: addedSessions, addedTasks: addedTasks, updatedTasks: updatedTasks, addedCategories: addedCategories};
   }
 
-  // Folds an incoming garden into the local one. Every rule here is chosen to
-  // be IDEMPOTENT, because a sync pull runs again and again over the same
-  // remote copy: anything summed would grow on every pull, so counters take
-  // the larger of the two rather than the total.
-  //
-  // Nothing local is ever removed or moved, which is the same promise the rest
-  // of the importer makes.
   function mergeIncomingGarden(incoming){
     if(!incoming || typeof incoming !== 'object') return 0;
     var g = loadGarden();
 
-    // A plot can hold one thing. Where both sides planted on the same square
-    // the local plant stays and the incoming one is dropped rather than shoved
-    // to a free plot: a farm is arranged on purpose, and silently rearranging
-    // it is a worse surprise than one missing plant.
     var taken = {}, ids = {};
     g.items.forEach(function(it){ taken[it.row + ':' + it.col] = true; ids[it.id] = true; });
 
@@ -8669,9 +7761,6 @@
         col: Math.floor(it.col),
         row: Math.floor(it.row),
         plantedAt: typeof it.plantedAt === 'number' ? it.plantedAt : nowMs(),
-        // Age is measured in pomodoros, not in time, so this number is what
-        // decides whether the plant arrives grown or as a seedling. Missing it
-        // would restart every imported plant from bare soil.
         plantedSeeds: typeof it.plantedSeeds === 'number' ? Math.max(0, Math.floor(it.plantedSeeds)) : 0
       });
       ids[g.items[g.items.length - 1].id] = true;
@@ -8680,10 +7769,6 @@
       if(meta) addedCost += meta.price;
     });
 
-    // What the imported plants cost, charged once — an item is only ever added
-    // once, so this stays idempotent. Without it the balance is
-    // `earned + income - spent` over a farm somebody else paid for, which
-    // hands out free tokens for every plant that arrives.
     g.spent += addedCost;
     if(typeof incoming.income === 'number' && incoming.income > g.income) g.income = Math.floor(incoming.income);
     if(typeof incoming.parcels === 'number' && incoming.parcels > (g.parcels || 0)) g.parcels = Math.floor(incoming.parcels);
@@ -8701,29 +7786,33 @@
     return added;
   }
 
-  // ---------- reset statistics (two-step confirm, no native dialogs) ----------
-  var resetArmed = false;
-  var resetArmTimeout = null;
+  function closeResetConfirmation(restoreFocus){
+    els.resetStatsConfirm.hidden = true;
+    els.resetStatsBtn.setAttribute('aria-expanded', 'false');
+    if(restoreFocus) els.resetStatsBtn.focus();
+  }
+
   els.resetStatsBtn.addEventListener('click', function(){
-    if(!resetArmed){
-      resetArmed = true;
-      els.resetStatsBtn.textContent = 'Click again to confirm';
-      resetArmTimeout = setTimeout(function(){
-        resetArmed = false;
-        els.resetStatsBtn.textContent = 'Reset statistics';
-      }, 3500);
-    } else {
-      clearTimeout(resetArmTimeout);
-      resetArmed = false;
-      els.resetStatsBtn.textContent = 'Reset statistics';
-      saveSessions([]);
-      logViewDate = todayKey();
-      editingLogId = null;
-      refreshStats();
+    els.resetStatsConfirm.hidden = false;
+    els.resetStatsBtn.setAttribute('aria-expanded', 'true');
+    els.resetStatsCancelBtn.focus();
+  });
+  els.resetStatsCancelBtn.addEventListener('click', function(){ closeResetConfirmation(true); });
+  els.resetStatsConfirm.addEventListener('keydown', function(e){
+    if(e.key === 'Escape'){
+      e.stopPropagation();
+      closeResetConfirmation(true);
     }
   });
+  els.resetStatsConfirmBtn.addEventListener('click', function(){
+    if(els.resetStatsConfirm.hidden) return;
+    closeResetConfirmation(true);
+    saveSessions([]);
+    logViewDate = todayKey();
+    editingLogId = null;
+    refreshStats();
+  });
 
-  // ---------- log navigation ----------
   els.logPrevBtn.addEventListener('click', function(){ shiftLogView(-1); });
   els.logNextBtn.addEventListener('click', function(){ shiftLogView(1); });
   els.logTodayBtn.addEventListener('click', jumpLogToToday);
@@ -8738,7 +7827,6 @@
     }
   });
 
-  // ---------- wire up controls ----------
   els.startPauseBtn.addEventListener('click', startPause);
   els.resetBtn.addEventListener('click', resetTimer);
   els.skipBtn.addEventListener('click', skipPhase);
@@ -8749,8 +7837,6 @@
     state.workMin = v;
     if(!state.running && state.mode === 'focus'){ resetPhase(); }
     saveTimerState();
-    // Either box changes the ratio, and resetPhase() (which re-renders) only
-    // runs for the box matching the current phase — so refresh explicitly.
     renderScaleBreak();
   });
   els.breakInput.addEventListener('change', function(){
@@ -8806,8 +7892,6 @@
     }
   });
 
-  // Committing on blur too, so clicking away saves rather than silently
-  // discarding what was typed.
   els.skillsList.addEventListener('blur', function(e){
     var input = e.target.closest && e.target.closest('.skill-mark-input');
     if(!input || editingSkillName === null) return;
@@ -8824,8 +7908,6 @@
   });
   els.scaleBreakInput.addEventListener('change', function(){
     state.proportionalBreak = els.scaleBreakInput.checked;
-    // Re-length a break that is sitting idle, but never yank the clock out
-    // from under a break already counting down.
     if(!state.running && state.mode !== 'focus'){ resetPhase(); }
     saveTimerState();
     renderScaleBreak();
@@ -8833,12 +7915,12 @@
 
   window.addEventListener('resize', function(){ refreshStats(); });
 
-  // ---------- view tabs (Timer / Statistics / Garden) ----------
   var STORAGE_VIEW = 'pomodoroBench.activeView.v1';
   var VIEWS = ['timer', 'stats', 'garden'];
 
   function setActiveView(view){
     if(VIEWS.indexOf(view) < 0) view = 'timer';
+    if(view !== 'stats') closeResetConfirmation(false);
     els.viewTimer.hidden = view !== 'timer';
     els.viewStats.hidden = view !== 'stats';
     els.viewGarden.hidden = view !== 'garden';
@@ -8846,8 +7928,6 @@
     els.tabStatsBtn.setAttribute('aria-selected', String(view === 'stats'));
     els.tabGardenBtn.setAttribute('aria-selected', String(view === 'garden'));
     try{ localStorage.setItem(STORAGE_VIEW, view); }catch(e){}
-    // Both of these read from the session log, so they are rebuilt on the way in
-    // rather than kept warm while hidden.
     if(view === 'stats' || view === 'garden'){ refreshStats(); }
   }
 
@@ -8855,9 +7935,6 @@
   els.tabStatsBtn.addEventListener('click', function(){ setActiveView('stats'); });
   els.tabGardenBtn.addEventListener('click', function(){ setActiveView('garden'); });
 
-  // ---------- Insights time-range tabs (Day / Month / Year / All time) ----------
-  // Drives both "By category" and "By hour of day" together so the page
-  // never shows two charts implicitly describing two different periods.
   function setCategoryRange(range){
     categoryRange = range;
     var buttons = els.categoryRangeTabs.querySelectorAll('.range-tab-btn');
@@ -8872,26 +7949,20 @@
   els.categoryRangeTabs.addEventListener('click', function(e){
     var btn = e.target.closest('.range-tab-btn');
     if(!btn) return;
-    e.stopPropagation(); // don't let the document-level listener close the popover we may have just opened
+    e.stopPropagation();
     var range = btn.dataset.range;
     if(range === 'custom' && categoryRange === 'custom'){
-      // Already on Custom — clicking it again just reopens the popover to
-      // adjust the dates (it auto-closes once a range is confirmed).
       if(els.customRangePicker.hidden) openCustomRangePopover(); else closeCustomRangePopover();
       return;
     }
     setCategoryRange(range);
   });
 
-  // ---------- Insights custom date range popover ----------
-  // Anchored under the tab row instead of the single-picker's own trigger
-  // button, since "Custom" is a tab, not a field with its own affordance.
   var customRangeHostCard = els.customRangePicker.closest('.card');
 
   function openCustomRangePopover(){
     if(openDatePicker && openDatePicker !== customRangePopover) openDatePicker.close();
     els.customRangePicker.hidden = false;
-    // Lift the Insights card above its siblings — see .card-picker-active.
     if(customRangeHostCard) customRangeHostCard.classList.add('card-picker-active');
     openDatePicker = customRangePopover;
   }
@@ -8912,9 +7983,6 @@
     }catch(e){}
   }
 
-  // With the picker tucked away in a popover, the "Custom" tab's own label
-  // is the only place left to see which range is active — show it there
-  // once both ends are picked, e.g. "Aug 3–13" or "Aug 28 – Sep 2".
   var customTabBtn = els.categoryRangeTabs.querySelector('[data-range="custom"]');
   function updateCustomTabLabel(){
     if(!customRangeFrom || !customRangeTo){ customTabBtn.textContent = 'Custom'; return; }
@@ -8940,7 +8008,6 @@
     }
   });
 
-  // ---------- heatmap year navigation ----------
   els.heatmapPrevYearBtn.addEventListener('click', function(){
     heatmapViewYear -= 1;
     renderYearHeatmap(loadSessions());
@@ -8951,21 +8018,15 @@
     renderYearHeatmap(loadSessions());
   });
 
-  // ---------- Today's log expand/collapse ----------
   function setLogExpanded(v){
     logExpanded = v;
     els.logList.classList.toggle('log-list-expanded', v);
-    els.logExpandBtn.setAttribute('aria-pressed', String(v));
-    els.logExpandBtn.textContent = v ? '⤡' : '⤢';
-    els.logExpandBtn.title = v ? 'Collapse log' : 'Expand log';
-    els.logExpandBtn.setAttribute('aria-label', els.logExpandBtn.title);
     try{ localStorage.setItem(STORAGE_LOG_EXPANDED, v ? '1' : '0'); }catch(e){}
     renderLogForDate(loadSessions());
   }
 
   els.logExpandBtn.addEventListener('click', function(){ setLogExpanded(!logExpanded); });
 
-  // ---------- backup menu (top-right dropdown) ----------
   function setBackupMenuOpen(open){
     els.backupMenuPanel.hidden = !open;
     els.backupMenuBtn.setAttribute('aria-expanded', String(open));
@@ -8984,7 +8045,6 @@
     if(e.key === 'Escape' && !els.backupMenuPanel.hidden){ setBackupMenuOpen(false); }
   });
 
-  // ---------- boot ----------
   var savedView = 'timer';
   try{ savedView = localStorage.getItem(STORAGE_VIEW) || 'timer'; }catch(e){}
   setActiveView(savedView);
@@ -8998,7 +8058,7 @@
   }catch(e){}
   customRangeCalendar.setRange(customRangeFrom, customRangeTo);
   updateCustomTabLabel();
-  els.customRangePicker.hidden = true; // the popover itself never auto-opens on load, even if Custom was last selected
+  els.customRangePicker.hidden = true;
   (function(){
     var buttons = els.categoryRangeTabs.querySelectorAll('.range-tab-btn');
     for(var i=0;i<buttons.length;i++){
@@ -9007,10 +8067,6 @@
   })();
   try{ logExpanded = localStorage.getItem(STORAGE_LOG_EXPANDED) === '1'; }catch(e){}
   els.logList.classList.toggle('log-list-expanded', logExpanded);
-  els.logExpandBtn.setAttribute('aria-pressed', String(logExpanded));
-  els.logExpandBtn.textContent = logExpanded ? '⤡' : '⤢';
-  els.logExpandBtn.title = logExpanded ? 'Collapse log' : 'Expand log';
-  els.logExpandBtn.setAttribute('aria-label', els.logExpandBtn.title);
   loadTimerState();
   els.workInput.value = state.workMin;
   els.breakInput.value = state.breakMin;
@@ -9024,7 +8080,6 @@
   if(state.running && state.remainingMs > 0){
     startTicking();
   } else if(state.running && state.remainingMs <= 0){
-    // completed while the page was closed
     state.remainingMs = 0;
     completePhase();
   }
@@ -9034,19 +8089,13 @@
   wireTrendChartHover();
   wireGarden();
 
-  // ---------- external integration hook (used by js/sync.js) ----------
-  // Exposes just enough for the optional multi-device sync module to read/
-  // merge data the same way file import already does, without reaching
-  // into any other internals of this closure. categoryColorIndex/Class are
-  // exposed too, purely so tests can assert on the hash's distribution
-  // directly instead of rendering N tasks and scraping class names.
   window.PomodoroBench = {
     STORAGE_SESSIONS: STORAGE_SESSIONS,
     STORAGE_TASKS: STORAGE_TASKS,
     STORAGE_CATEGORIES: STORAGE_CATEGORIES,
     buildBackupData: buildBackupData,
     applyIncomingBackup: applyIncomingBackup,
-    // Task store hooks for js/sync.js (Firestore, one document per task).
+    clearSkillMarks: clearSkillMarks,
     getTasks: loadTasks,
     setTaskBackend: setTaskBackend,
     replaceTasksFromRemote: replaceTasksFromRemote,

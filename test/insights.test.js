@@ -65,7 +65,7 @@ describe('insights: by hour of day', () => {
   it('names the peak focus hour once sessions exist', async () => {
     seed([focusSession({ minutes: 30 })]);
     const els = await mountApp();
-    expect(document.getElementById('peakHourNote').textContent).toContain('Peak focus hours:');
+    expect(document.getElementById('peakHourNote').textContent).toContain('Peak focus:');
   });
 });
 
@@ -87,10 +87,10 @@ describe('pomodoro heatmap', () => {
 describe('insights: Week range tab', () => {
   it('restricts the breakdown to the current Monday–Sunday week', async () => {
     const now = new Date();
-    const mondayOffset = (now.getDay() + 6) % 7; // days since Monday
+    const mondayOffset = (now.getDay() + 6) % 7;
     seed([
       focusSession({ date: todayKey(), category: 'Work', minutes: 30 }),
-      focusSession({ date: daysAgoKey(mondayOffset + 1), category: 'Learning', minutes: 90 }) // the Sunday before this week
+      focusSession({ date: daysAgoKey(mondayOffset + 1), category: 'Learning', minutes: 90 })
     ]);
     const els = await mountApp();
     els.categoryRangeTabs.querySelector('[data-range="week"]').click();
@@ -116,27 +116,58 @@ describe('insights: focus by category over time', () => {
     const names = legendItems().map((el) => el.dataset.category);
     expect(names).toEqual(['Learning', 'English']);
     expect(document.querySelector('#trendLegend .trend-legend-avg').textContent).toContain('Average, all categories');
-    expect(document.getElementById('trendTitle').textContent).toContain('per month');
+    expect(document.getElementById('trendTitle').textContent).toBe('Focus by category');
+    expect(document.getElementById('categoryTrendChart').getAttribute('aria-label')).toContain('per month');
   });
 
-  it('names the axis unit after the selected range', async () => {
+  it('updates the chart description and average unit for the selected range', async () => {
     seed([focusSession({ minutes: 30 })]);
     const els = await mountApp();
     els.categoryRangeTabs.querySelector('[data-range="week"]').click();
-    expect(document.getElementById('trendTitle').textContent).toContain('per day');
+    expect(document.getElementById('categoryTrendChart').getAttribute('aria-label')).toContain('per day');
+    expect(document.querySelector('#trendLegend .trend-legend-avg').textContent).toContain('per day');
     els.categoryRangeTabs.querySelector('[data-range="year"]').click();
-    expect(document.getElementById('trendTitle').textContent).toContain('per month');
+    expect(document.getElementById('categoryTrendChart').getAttribute('aria-label')).toContain('per month');
+    expect(document.querySelector('#trendLegend .trend-legend-avg').textContent).toContain('per month');
+  });
+
+  it('draws a marker for every category and day in the week view', async () => {
+    const arcs = [];
+    HTMLCanvasElement.prototype.getContext = function(){
+      const canvas = this;
+      const state = {};
+      return new Proxy(state, {
+        get(target, prop){
+          if(prop in target) return target[prop];
+          return function(...args){
+            if(canvas.id === 'categoryTrendChart' && prop === 'arc') arcs.push(args);
+          };
+        },
+        set(target, prop, value){
+          target[prop] = value;
+          return true;
+        }
+      });
+    };
+    seed([focusSession({ category: 'Work', minutes: 30 }), focusSession({ category: 'Learning', minutes: 45 })]);
+    const els = await mountApp();
+    arcs.length = 0;
+    els.categoryRangeTabs.querySelector('[data-range="week"]').click();
+    const pointArcs = arcs.filter(args => args[2] === 2.25);
+    const daysStarted = (new Date().getDay() + 6) % 7 + 1;
+    expect(new Set(pointArcs.map(args => Math.round(args[0]))).size).toBe(daysStarted);
+    expect(pointArcs.length).toBeGreaterThanOrEqual(daysStarted * 2);
   });
 
   it('clicking a legend chip isolates that category; clicking again releases it', async () => {
     seed([focusSession({ category: 'English', minutes: 20 }), focusSession({ category: 'Learning', minutes: 60 })]);
     await mountApp();
-    legendItems()[1].click(); // English
+    legendItems()[1].click();
     let items = legendItems();
     expect(items[1].getAttribute('aria-pressed')).toBe('true');
     expect(items[0].classList.contains('is-dim')).toBe(true);
     expect(document.querySelector('#trendLegend .trend-legend-avg').textContent).toContain('English average');
-    expect(document.getElementById('trendNote').textContent).toContain('English: 20m');
+    expect(document.getElementById('trendNote').textContent).toContain('English · 20m');
 
     legendItems()[1].click();
     items = legendItems();
@@ -149,7 +180,32 @@ describe('insights: focus by category over time', () => {
     await mountApp();
     const note = document.getElementById('trendNote').textContent;
     expect(note).toContain('Peak:');
-    expect(note).toContain('Work leads this period at 75% of focus time');
+    expect(note).toContain('Top category: Work · 75%');
+  });
+
+  it.each(['all', 'day'])('Show all clears category selection in the %s view', async (range) => {
+    seed([focusSession({ category: 'Work', minutes: 60 }), focusSession({ category: 'Learning', minutes: 20 })]);
+    const els = await mountApp();
+    els.categoryRangeTabs.querySelector('[data-range="' + range + '"]').click();
+    legendItems()[0].click();
+    const selected = document.querySelector('#trendLegend .is-selected');
+    expect(document.activeElement).toBe(selected);
+    const showAll = document.querySelector('#trendLegend .trend-show-all');
+    expect(showAll).not.toBeNull();
+    showAll.click();
+    expect(document.querySelector('#trendLegend .is-selected')).toBeNull();
+    expect(document.querySelector('#trendLegend .trend-show-all')).toBeNull();
+    expect(legendItems().every(item => item.getAttribute('aria-pressed') === 'false')).toBe(true);
+    expect(document.activeElement).toBe(legendItems()[0]);
+  });
+
+  it('renders category names as text in compact summaries', async () => {
+    const name = '<img src=x onerror=alert(1)>';
+    seed([focusSession({ category: name, minutes: 30 })]);
+    await mountApp();
+    const note = document.getElementById('trendNote');
+    expect(note.textContent).toContain(name);
+    expect(note.querySelector('img')).toBeNull();
   });
 });
 
@@ -165,17 +221,18 @@ describe("insights: today's timeline (Day range)", () => {
     ]);
     const els = await mountApp();
     els.categoryRangeTabs.querySelector('[data-range="day"]').click();
-    expect(document.getElementById('trendTitle').textContent).toBe("Focus by category · today's timeline");
+    expect(document.getElementById('trendTitle').textContent).toBe('Today’s timeline');
     expect(legendItems().map((el) => el.dataset.category)).toEqual(['Learning', 'English']);
     expect(document.querySelector('#trendLegend .trend-legend-avg')).toBeNull();
     const note = document.getElementById('trendNote').textContent;
-    expect(note).toContain('3 sessions today, 1h 40m in total, from 14:05 to 16:30.');
+    expect(note).toContain('3 sessions · 1h 40m');
+    expect(note).toContain('14:05–16:30');
   });
 
   it('shows an empty note when nothing was logged today', async () => {
     const els = await mountApp();
     els.categoryRangeTabs.querySelector('[data-range="day"]').click();
-    expect(document.getElementById('trendNote').textContent).toBe('No focus sessions logged today.');
+    expect(document.getElementById('trendNote').textContent).toBe('No focus sessions yet today.');
   });
 
   it('selecting a category narrows the summary to it', async () => {
@@ -186,8 +243,9 @@ describe("insights: today's timeline (Day range)", () => {
     ]);
     const els = await mountApp();
     els.categoryRangeTabs.querySelector('[data-range="day"]').click();
-    legendItems()[1].click(); // English
-    expect(document.getElementById('trendNote').textContent).toContain('English: 1 session today, 25m, from 09:30 to 09:55.');
+    legendItems()[1].click();
+    expect(document.getElementById('trendNote').textContent).toContain('English · 1 session · 25m');
+    expect(document.getElementById('trendNote').textContent).toContain('09:30–09:55');
     expect(legendItems()[0].classList.contains('is-dim')).toBe(true);
   });
 });
@@ -203,7 +261,7 @@ describe('insights: many categories in the trend chart', () => {
     const more = document.querySelector('#trendLegend .trend-legend-more');
     expect(more.textContent).toBe('+3 more');
     expect(more.getAttribute('aria-expanded')).toBe('false');
-    expect(document.getElementById('trendNote').textContent).toContain('The top 5 categories are in colour');
+    expect(document.getElementById('trendNote').querySelectorAll('span')).toHaveLength(2);
   });
 
   it('unfolds the grey categories and lets one be selected', async () => {
@@ -218,7 +276,6 @@ describe('insights: many categories in the trend chart', () => {
     const selected = document.querySelector('#trendLegend .trend-legend-item.is-selected');
     expect(selected.dataset.category).toBe('G');
     expect(document.querySelector('#trendLegend .trend-legend-avg').textContent).toContain('G average');
-    // The selected grey category moves up into the main row of chips.
     expect(chips().slice(0, 6).map((el) => el.dataset.category)).toContain('G');
   });
 });

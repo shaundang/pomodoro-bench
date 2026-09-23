@@ -15,6 +15,7 @@
     "pomodoroBench.logExpanded.v1"
   ],
   "cacheOrQueue": [
+    "pomodoroBench.skillMarks.expiresAt.v1",
     "pomodoroBench.tasks.v1.pending"
   ],
   "migrationCopies": [
