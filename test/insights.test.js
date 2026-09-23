@@ -131,6 +131,34 @@ describe('insights: focus by category over time', () => {
     expect(document.querySelector('#trendLegend .trend-legend-avg').textContent).toContain('per month');
   });
 
+  it('draws a marker for every category and day in the week view', async () => {
+    const arcs = [];
+    HTMLCanvasElement.prototype.getContext = function(){
+      const canvas = this;
+      const state = {};
+      return new Proxy(state, {
+        get(target, prop){
+          if(prop in target) return target[prop];
+          return function(...args){
+            if(canvas.id === 'categoryTrendChart' && prop === 'arc') arcs.push(args);
+          };
+        },
+        set(target, prop, value){
+          target[prop] = value;
+          return true;
+        }
+      });
+    };
+    seed([focusSession({ category: 'Work', minutes: 30 }), focusSession({ category: 'Learning', minutes: 45 })]);
+    const els = await mountApp();
+    arcs.length = 0;
+    els.categoryRangeTabs.querySelector('[data-range="week"]').click();
+    const pointArcs = arcs.filter(args => args[2] === 2.25);
+    const daysStarted = (new Date().getDay() + 6) % 7 + 1;
+    expect(new Set(pointArcs.map(args => Math.round(args[0]))).size).toBe(daysStarted);
+    expect(pointArcs.length).toBeGreaterThanOrEqual(daysStarted * 2);
+  });
+
   it('clicking a legend chip isolates that category; clicking again releases it', async () => {
     seed([focusSession({ category: 'English', minutes: 20 }), focusSession({ category: 'Learning', minutes: 60 })]);
     await mountApp();

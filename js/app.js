@@ -7124,6 +7124,20 @@
       });
       ctx.globalAlpha = 1;
 
+      order.forEach(function(si){
+        var sr = series[si];
+        var isTop = si === selIdx || si === lit;
+        var isVisible = isTop || selIdx < 0 || sr.colored;
+        ctx.globalAlpha = isTop || sr.colored ? 1 : 0.35;
+        ctx.fillStyle = sr.colored || isTop ? hues[si] : inkSoft;
+        for(var markerIdx = 0; markerIdx < drawn; markerIdx++){
+          ctx.beginPath();
+          ctx.arc(xAt(markerIdx), yAt(sr.values[markerIdx]) * progress + baseY * (1 - progress), isTop ? 3 : (isVisible ? 2.25 : 1.5), 0, Math.PI * 2);
+          ctx.fill();
+        }
+      });
+      ctx.globalAlpha = 1;
+
       if(avg > 0){
         var ay = Math.round(yAt(avg * progress)) + 0.5;
         ctx.strokeStyle = ink;
