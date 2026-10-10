@@ -16,6 +16,7 @@
   var STORAGE_CATEGORIES = 'pomodoroBench.categories.v1';
   var STORAGE_TIMER = 'pomodoroBench.timer.v1';
   var STORAGE_PRESETS = 'pomodoroBench.customPresets.v1';
+  var STORAGE_RECOMMENDATION_ENABLED = 'pomodoroBench.recommendationEnabled.v1';
   var STORAGE_SKILL_MARKS = 'pomodoroBench.skillMarks.v1';
   var STORAGE_SKILL_MARKS_EXPIRES = 'pomodoroBench.skillMarks.expiresAt.v1';
   var SKILL_MARKS_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -71,6 +72,23 @@
     banner: document.getElementById('banner'),
     bannerText: document.getElementById('bannerText'),
     bannerAction: document.getElementById('bannerAction'),
+    coachPlanTab: document.getElementById('coachPlanTab'),
+    coachForecastTab: document.getElementById('coachForecastTab'),
+    coachPatternsTab: document.getElementById('coachPatternsTab'),
+    coachPlanPanel: document.getElementById('coachPlanPanel'),
+    coachForecastPanel: document.getElementById('coachForecastPanel'),
+    coachPatternsPanel: document.getElementById('coachPatternsPanel'),
+    coachFocusTarget: document.getElementById('coachFocusTarget'),
+    coachSessionTarget: document.getElementById('coachSessionTarget'),
+    coachSlotList: document.getElementById('coachSlotList'),
+    applyCoachPlanBtn: document.getElementById('applyCoachPlanBtn'),
+    coachForecastList: document.getElementById('coachForecastList'),
+    coachBestTime: document.getElementById('coachBestTime'),
+    coachBestDuration: document.getElementById('coachBestDuration'),
+    coachBestDay: document.getElementById('coachBestDay'),
+    coachBestBreak: document.getElementById('coachBestBreak'),
+    coachWeeklyPace: document.getElementById('coachWeeklyPace'),
+    coachCompletion: document.getElementById('coachCompletion'),
     todayMinutes: document.getElementById('todayMinutes'),
     todayPomodoros: document.getElementById('todayPomodoros'),
     todayCompare: document.getElementById('todayCompare'),
@@ -176,6 +194,13 @@
   var heatmapViewYear = new Date().getFullYear();
   var STORAGE_LOG_EXPANDED = 'pomodoroBench.logExpanded.v1';
   var logExpanded = false;
+  var coachRecommendation = null;
+  var publishedMlForecast = null;
+  var shownRecommendationRunId = null;
+  var activeRecommendation = null;
+  var applyingCoachRecommendation = false;
+  var recommendationEnabled = false;
+  try{ recommendationEnabled = localStorage.getItem(STORAGE_RECOMMENDATION_ENABLED) === '1'; }catch(e){}
 
   function loadTimerState(){
     try{
@@ -209,6 +234,22 @@
 
   function notifyLocalChange(what){
     try{ window.dispatchEvent(new CustomEvent('pomodoroBench:changed', {detail: {what: what}})); }
+    catch(e){   }
+  }
+
+  function notifyRecommendation(type, extra){
+    if(!coachRecommendation || !coachRecommendation.runId) return;
+    var detail = {
+      type: type,
+      runId: coachRecommendation.runId,
+      modelVersion: coachRecommendation.modelVersion || '',
+      category: coachRecommendation.category,
+      focusMinutes: coachRecommendation.minutes,
+      breakMinutes: coachRecommendation.breakMinutes,
+      clientAt: nowMs()
+    };
+    Object.keys(extra || {}).forEach(function(key){ detail[key] = extra[key]; });
+    try{ window.dispatchEvent(new CustomEvent('pomodoroBench:recommendation', {detail: detail})); }
     catch(e){   }
   }
 
@@ -274,9 +315,53 @@
       row.appendChild(del);
       els.presetGrid.appendChild(row);
     });
+    renderRecommendationPreset();
     var current = findPreset(state.presetId);
     els.presetNote.textContent = current ? (current.note || '') : '';
     els.presetDetails.hidden = !els.presetNote.textContent;
+  }
+
+  function renderRecommendationPreset(){
+    var ready = !!coachRecommendation;
+    var enabled = ready && recommendationEnabled;
+    var row = document.createElement('div');
+    row.className = 'recommendation-row' + (ready ? ' is-ready' : '') + (enabled ? ' is-enabled' : '');
+    row.id = 'recommendationPreset';
+
+    var preset = document.createElement('button');
+    preset.type = 'button';
+    preset.className = 'preset-btn';
+    preset.id = 'recommendationPresetBtn';
+    preset.disabled = !enabled;
+    preset.setAttribute('role', 'listitem');
+    preset.setAttribute('aria-pressed', String(enabled));
+    var name = ready ? coachRecommendation.category : 'Personal preset';
+    var length = ready ? coachRecommendation.minutes + ' / ' + coachRecommendation.breakMinutes + ' min' : '— / — min';
+    preset.innerHTML = '<span class="p-name recommendation-name"><span class="recommendation-tag">Recommendation</span>' + escapeHtml(name) + '</span>' +
+      '<span class="p-len">' + length + '</span>';
+    preset.addEventListener('click', applyCoachRecommendation);
+
+    var toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'icon-btn recommendation-toggle';
+    toggle.id = 'recommendationToggleBtn';
+    toggle.textContent = enabled ? '✓' : '+';
+    toggle.disabled = !ready;
+    toggle.setAttribute('aria-pressed', String(enabled));
+    toggle.setAttribute('aria-label', enabled ? 'Disable recommendation' : 'Enable recommendation');
+    toggle.title = toggle.getAttribute('aria-label');
+    toggle.addEventListener('click', function(){
+      recommendationEnabled = !recommendationEnabled;
+      try{ localStorage.setItem(STORAGE_RECOMMENDATION_ENABLED, recommendationEnabled ? '1' : '0'); }catch(e){}
+      notifyRecommendation(recommendationEnabled ? 'enabled' : 'disabled');
+      if(recommendationEnabled) applyCoachRecommendation();
+      else activeRecommendation = null;
+      renderPresets();
+    });
+
+    row.appendChild(preset);
+    row.appendChild(toggle);
+    els.presetGrid.appendChild(row);
   }
 
   function addCustomPreset(label, work, brk){
@@ -433,6 +518,7 @@
   function applyPreset(id){
     var p = findPreset(id);
     if(!p) return;
+    activeRecommendation = null;
     state.presetId = id;
     state.workMin = p.work;
     state.breakMin = p.brk;
@@ -737,6 +823,7 @@
 
     if(state.mode === 'focus'){
       var loggedId = logSession(state.workMin, 'completed', 'focus');
+      finishActiveRecommendation('completed', loggedId, state.workMin);
       incrementTaskCompleted(state.activeTaskId);
       state.lastFocusMin = state.workMin;
       state.completedInCycle += 1;
@@ -812,6 +899,7 @@
     if(elapsedMin >= 1){
       logSession(elapsedMin, 'skipped', state.mode === 'focus' ? 'focus' : 'break');
     }
+    if(state.mode === 'focus') finishActiveRecommendation('skipped', null, elapsedMin);
     refreshStats();
 
     state.endAt = null;
@@ -1437,6 +1525,259 @@
     return id;
   }
 
+  var COACH_DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  function coachMedian(values){
+    if(values.length === 0) return 0;
+    var sorted = values.slice().sort(function(a, b){ return a - b; });
+    var middle = Math.floor(sorted.length / 2);
+    if(sorted.length % 2) return sorted[middle];
+    return Math.round((sorted[middle - 1] + sorted[middle]) / 2);
+  }
+
+  function coachRoundMinutes(value){
+    return Math.max(5, Math.round(value / 5) * 5);
+  }
+
+  function coachHour(hour){
+    return String(hour).padStart(2, '0') + ':00';
+  }
+
+  function coachWeekStart(offset){
+    var start = new Date();
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() + ((8 - start.getDay()) % 7) + offset * 7);
+    return start;
+  }
+
+  function coachWeekLabel(offset){
+    var start = coachWeekStart(offset);
+    return start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+
+  function setCoachEmpty(){
+    coachRecommendation = null;
+    renderPresets();
+    els.coachFocusTarget.textContent = '—';
+    els.coachSessionTarget.textContent = '—';
+    els.coachSlotList.replaceChildren();
+    els.applyCoachPlanBtn.disabled = true;
+    els.coachForecastList.replaceChildren();
+    els.coachBestTime.textContent = '—';
+    els.coachBestDuration.textContent = '—';
+    els.coachBestDay.textContent = '—';
+    els.coachBestBreak.textContent = '—';
+    els.coachWeeklyPace.textContent = '—';
+    els.coachCompletion.textContent = '—';
+  }
+
+  function renderCoachSlots(slots, duration){
+    els.coachSlotList.replaceChildren();
+    slots.slice(0, 3).forEach(function(slot){
+      var row = document.createElement('div');
+      row.className = 'coach-slot';
+      var category = document.createElement('strong');
+      category.textContent = slot.category || 'Focus';
+      var sessions = document.createElement('span');
+      var weeklySessions = Math.max(1, Math.round(Number(slot.weeklySessions) || 1));
+      sessions.textContent = weeklySessions + (weeklySessions === 1 ? ' session' : ' sessions');
+      var bestWindow = document.createElement('span');
+      bestWindow.textContent = 'Best ' + coachHour(Number(slot.hour) || 0) + ' · ' + (slot.focusMinutes || duration) + ' min';
+      row.appendChild(category);
+      row.appendChild(sessions);
+      row.appendChild(bestWindow);
+      els.coachSlotList.appendChild(row);
+    });
+  }
+
+  function paintCoachForecast(forecasts){
+    var maxMinutes = Math.max.apply(null, forecasts.map(function(item){ return item.minutes; }));
+    els.coachForecastList.replaceChildren();
+    forecasts.forEach(function(item){
+      var row = document.createElement('div');
+      row.className = 'coach-forecast-row';
+      var label = document.createElement('strong');
+      label.textContent = item.label;
+      var duration = document.createElement('span');
+      duration.textContent = formatDuration(item.minutes);
+      var sessions = document.createElement('span');
+      sessions.textContent = item.sessions + (item.sessions === 1 ? ' session' : ' sessions');
+      var track = document.createElement('div');
+      track.className = 'coach-forecast-track';
+      var fill = document.createElement('div');
+      fill.className = 'coach-forecast-fill';
+      fill.style.width = Math.round(item.minutes / maxMinutes * 100) + '%';
+      track.appendChild(fill);
+      row.appendChild(label);
+      row.appendChild(duration);
+      row.appendChild(sessions);
+      row.appendChild(track);
+      els.coachForecastList.appendChild(row);
+    });
+  }
+
+  function renderCoachForecast(weeklyTotals, weeklyMinutes, weeklySessions){
+    var ordered = Object.keys(weeklyTotals).sort().map(function(key){ return weeklyTotals[key]; });
+    var recent = ordered.slice(-4);
+    var slope = recent.length > 1 ? (recent[recent.length - 1] - recent[0]) / (recent.length - 1) : 0;
+    slope = Math.max(-weeklyMinutes * 0.15, Math.min(weeklyMinutes * 0.15, slope));
+    var forecasts = [0, 1, 2, 3].map(function(offset){
+      var minutes = coachRoundMinutes(Math.max(5, weeklyMinutes + slope * (offset + 1) * 0.5));
+      var sessions = Math.max(1, Math.round(weeklySessions * minutes / weeklyMinutes));
+      return { label: coachWeekLabel(offset), minutes: minutes, sessions: sessions };
+    });
+    paintCoachForecast(forecasts);
+  }
+
+  function renderPublishedCoach(forecast){
+    if(!forecast || forecast.status !== 'ready' || !forecast.recommendation || !forecast.plan || !forecast.patterns) return false;
+    var recommendation = forecast.recommendation;
+    var minutes = Number(recommendation.focusMinutes);
+    var breakMinutes = Number(recommendation.breakMinutes);
+    if(!Number.isFinite(minutes) || minutes < 1 || !Number.isFinite(breakMinutes) || breakMinutes < 1) return false;
+    var plan = forecast.plan;
+    var patterns = forecast.patterns;
+    var weeklyMinutes = Number(plan.focusMinutes);
+    var weeklySessions = Number(plan.sessions);
+    coachRecommendation = {
+      minutes: Math.round(minutes),
+      breakMinutes: Math.round(breakMinutes),
+      category: String(recommendation.category || 'Focus'),
+      expectedMinutes: Number(recommendation.expectedFocusMinutes) || Math.round(minutes),
+      nextLabel: String(recommendation.nextAt || ''),
+      runId: String(forecast.runId || ''),
+      modelVersion: String(forecast.modelVersion || '')
+    };
+    renderPresets();
+    els.coachFocusTarget.textContent = Number.isFinite(weeklyMinutes) ? formatDuration(weeklyMinutes) : '—';
+    els.coachSessionTarget.textContent = Number.isFinite(weeklySessions) ? Math.round(weeklySessions) + (Math.round(weeklySessions) === 1 ? ' session' : ' sessions') : '—';
+    els.applyCoachPlanBtn.disabled = false;
+    els.coachBestTime.textContent = coachHour(Number(patterns.bestHour) || 0) + '–' + coachHour(((Number(patterns.bestHour) || 0) + 1) % 24);
+    els.coachBestDuration.textContent = (Number(patterns.bestDurationMinutes) || minutes) + ' min';
+    els.coachBestDay.textContent = COACH_DAY_NAMES[Number(patterns.bestDay)] || '—';
+    els.coachBestBreak.textContent = (Number(patterns.bestBreakMinutes) || breakMinutes) + ' min';
+    els.coachWeeklyPace.textContent = Math.round(Number(patterns.weeklySessions) || weeklySessions) + ' sessions';
+    els.coachCompletion.textContent = Math.round((Number(patterns.completionRate) || 0) * 100) + '%';
+    renderCoachSlots(Array.isArray(plan.slots) ? plan.slots : [], minutes);
+    var weeks = Array.isArray(forecast.weeks) ? forecast.weeks.slice(0, 8).map(function(item){
+      return { label: String(item.label || item.weekStart || ''), minutes: Number(item.focusMinutes) || 0, sessions: Math.max(1, Math.round(Number(item.sessions) || 1)) };
+    }).filter(function(item){ return item.minutes > 0; }) : [];
+    if(weeks.length) paintCoachForecast(weeks); else els.coachForecastList.replaceChildren();
+    if(coachRecommendation.runId && shownRecommendationRunId !== coachRecommendation.runId){
+      shownRecommendationRunId = coachRecommendation.runId;
+      notifyRecommendation('shown');
+    }
+    return true;
+  }
+
+  function renderCoach(sessions){
+    if(renderPublishedCoach(publishedMlForecast)) return;
+    var focusSessions = sessions.filter(function(s){
+      return s.type !== 'break' && Number.isFinite(s.minutes) && s.minutes > 0 && Number.isFinite(s.timestamp);
+    });
+    var completed = focusSessions.filter(function(s){ return s.status === 'completed'; });
+    if(completed.length < 3){ setCoachEmpty(); return; }
+
+    var byHour = {};
+    var byDay = {};
+    var byCategory = {};
+    var byCategorySessions = {};
+    var bySlot = {};
+    var weeklyTotals = {};
+    completed.forEach(function(s){
+      var date = new Date(s.timestamp);
+      var hour = date.getHours();
+      var day = date.getDay();
+      var slotKey = s.category + ':' + day + ':' + hour;
+      var week = new Date(date.getFullYear(), date.getMonth(), date.getDate() - ((date.getDay() + 6) % 7));
+      var weekKey = todayKey(week);
+      byHour[hour] = (byHour[hour] || 0) + s.minutes;
+      byDay[day] = (byDay[day] || 0) + s.minutes;
+      byCategory[s.category] = (byCategory[s.category] || 0) + s.minutes;
+      byCategorySessions[s.category] = (byCategorySessions[s.category] || 0) + 1;
+      if(!bySlot[slotKey]) bySlot[slotKey] = { category: s.category, day: day, hour: hour, minutes: 0 };
+      bySlot[slotKey].minutes += s.minutes;
+      weeklyTotals[weekKey] = (weeklyTotals[weekKey] || 0) + s.minutes;
+    });
+
+    function strongestKey(values){
+      return Object.keys(values).sort(function(a, b){ return values[b] - values[a]; })[0];
+    }
+
+    var bestHour = Number(strongestKey(byHour));
+    var bestDay = Number(strongestKey(byDay));
+    var bestCategory = strongestKey(byCategory);
+    var duration = Math.min(120, coachRoundMinutes(coachMedian(completed.map(function(s){ return s.minutes; }))));
+    var completionRate = completed.length / focusSessions.length;
+    var expectedMinutes = coachRoundMinutes(duration * completionRate);
+    var weeklyValues = Object.keys(weeklyTotals).sort().slice(-4).map(function(key){ return weeklyTotals[key]; });
+    var weeklyMinutes = coachRoundMinutes(weeklyValues.reduce(function(sum, value){ return sum + value; }, 0) / weeklyValues.length);
+    var weeklySessions = Math.max(1, Math.round(completed.length / Math.max(1, Object.keys(weeklyTotals).length)));
+    var breakSessions = sessions.filter(function(s){ return s.type === 'break' && Number.isFinite(s.minutes) && s.minutes > 0; });
+    var breakMinutes = breakSessions.length ? coachRoundMinutes(coachMedian(breakSessions.map(function(s){ return s.minutes; }))) : state.breakMin;
+    var rankedSlots = Object.keys(bySlot).map(function(key){ return bySlot[key]; }).sort(function(a, b){ return b.minutes - a.minutes; });
+    var seenCategories = {};
+    var slots = rankedSlots.filter(function(slot){
+      if(seenCategories[slot.category]) return false;
+      seenCategories[slot.category] = true;
+      return true;
+    }).slice(0, 3);
+    slots.forEach(function(slot){
+      slot.weeklySessions = Math.max(1, Math.round(weeklySessions * byCategorySessions[slot.category] / completed.length));
+    });
+    var now = new Date();
+    var nextDay = bestHour > now.getHours() ? 'Today' : 'Tomorrow';
+
+    coachRecommendation = {
+      minutes: duration,
+      breakMinutes: breakMinutes,
+      category: bestCategory,
+      expectedMinutes: expectedMinutes,
+      nextLabel: nextDay + ' ' + coachHour(bestHour)
+    };
+    renderPresets();
+    els.coachFocusTarget.textContent = formatDuration(weeklyMinutes);
+    els.coachSessionTarget.textContent = weeklySessions + (weeklySessions === 1 ? ' session' : ' sessions');
+    els.applyCoachPlanBtn.disabled = false;
+    els.coachBestTime.textContent = coachHour(bestHour) + '–' + coachHour((bestHour + 1) % 24);
+    els.coachBestDuration.textContent = duration + ' min';
+    els.coachBestDay.textContent = COACH_DAY_NAMES[bestDay];
+    els.coachBestBreak.textContent = breakMinutes + ' min';
+    els.coachWeeklyPace.textContent = weeklySessions + (weeklySessions === 1 ? ' session' : ' sessions');
+    els.coachCompletion.textContent = Math.round(completionRate * 100) + '%';
+    renderCoachSlots(slots, duration);
+    renderCoachForecast(weeklyTotals, weeklyMinutes, weeklySessions);
+  }
+
+  function applyCoachRecommendation(){
+    if(!coachRecommendation) return;
+    applyingCoachRecommendation = true;
+    els.workInput.value = coachRecommendation.minutes;
+    els.workInput.dispatchEvent(new Event('change', { bubbles: true }));
+    els.breakInput.value = coachRecommendation.breakMinutes;
+    els.breakInput.dispatchEvent(new Event('change', { bubbles: true }));
+    applyingCoachRecommendation = false;
+    if(coachRecommendation.runId){
+      activeRecommendation = {
+        runId: coachRecommendation.runId,
+        modelVersion: coachRecommendation.modelVersion || ''
+      };
+      notifyRecommendation('applied');
+    }
+    setActiveView('timer');
+  }
+
+  function finishActiveRecommendation(type, sessionId, actualMinutes){
+    if(!activeRecommendation || !coachRecommendation || activeRecommendation.runId !== coachRecommendation.runId) return;
+    notifyRecommendation(type, { sessionId: sessionId || null, actualMinutes: actualMinutes });
+    activeRecommendation = null;
+  }
+
+  function applyMlForecast(forecast){
+    publishedMlForecast = forecast && typeof forecast === 'object' ? forecast : null;
+    refreshStats();
+  }
+
   function refreshStats(){
     var sessions = loadSessions();
     var focusSessions = sessions.filter(function(s){ return s.type !== 'break'; });
@@ -1490,6 +1831,7 @@
     renderComeback(daysWithSessions);
     renderSkills(focusSessions);
     renderLogForDate(sessions);
+    renderCoach(sessions);
     renderInsights(sessions);
     renderYearHeatmap(focusSessions);
     renderGarden(focusSessions);
@@ -7874,6 +8216,7 @@
   els.skipBtn.addEventListener('click', skipPhase);
 
   els.workInput.addEventListener('change', function(){
+    if(!applyingCoachRecommendation) activeRecommendation = null;
     var v = Math.max(1, Math.min(180, parseInt(els.workInput.value,10) || 25));
     els.workInput.value = v;
     state.workMin = v;
@@ -7882,6 +8225,7 @@
     renderScaleBreak();
   });
   els.breakInput.addEventListener('change', function(){
+    if(!applyingCoachRecommendation) activeRecommendation = null;
     var v = Math.max(1, Math.min(60, parseInt(els.breakInput.value,10) || 5));
     els.breakInput.value = v;
     state.breakMin = v;
@@ -7984,6 +8328,35 @@
   els.tabTimerBtn.addEventListener('click', function(){ setActiveView('timer'); });
   els.tabStatsBtn.addEventListener('click', function(){ setActiveView('stats'); });
   els.tabGardenBtn.addEventListener('click', function(){ setActiveView('garden'); });
+  els.applyCoachPlanBtn.addEventListener('click', applyCoachRecommendation);
+
+  var coachViews = [
+    { name: 'plan', tab: els.coachPlanTab, panel: els.coachPlanPanel },
+    { name: 'forecast', tab: els.coachForecastTab, panel: els.coachForecastPanel },
+    { name: 'patterns', tab: els.coachPatternsTab, panel: els.coachPatternsPanel }
+  ];
+
+  function setCoachView(name, moveFocus){
+    coachViews.forEach(function(view){
+      var selected = view.name === name;
+      view.tab.setAttribute('aria-selected', String(selected));
+      view.tab.tabIndex = selected ? 0 : -1;
+      view.panel.hidden = !selected;
+      if(selected && moveFocus) view.tab.focus();
+    });
+  }
+
+  coachViews.forEach(function(view, index){
+    view.tab.addEventListener('click', function(){ setCoachView(view.name, false); });
+    view.tab.addEventListener('keydown', function(e){
+      if(e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+      var direction = e.key === 'ArrowRight' ? 1 : -1;
+      var next = (index + direction + coachViews.length) % coachViews.length;
+      setCoachView(coachViews[next].name, true);
+    });
+  });
+  setCoachView('plan', false);
 
   function setCategoryRange(range){
     categoryRange = range;
@@ -8145,6 +8518,7 @@
     STORAGE_CATEGORIES: STORAGE_CATEGORIES,
     buildBackupData: buildBackupData,
     applyIncomingBackup: applyIncomingBackup,
+    applyMlForecast: applyMlForecast,
     clearSkillMarks: clearSkillMarks,
     getTasks: loadTasks,
     setTaskBackend: setTaskBackend,

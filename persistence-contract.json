@@ -12,7 +12,8 @@
     "pomodoroBench.activeView.v1",
     "pomodoroBench.categoryRange.v1",
     "pomodoroBench.customRange.v1",
-    "pomodoroBench.logExpanded.v1"
+    "pomodoroBench.logExpanded.v1",
+    "pomodoroBench.recommendationEnabled.v1"
   ],
   "cacheOrQueue": [
     "pomodoroBench.skillMarks.expiresAt.v1",

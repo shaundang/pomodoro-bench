@@ -18,6 +18,7 @@ let failGetDocs; // Error to throw from getDocs, to simulate denied rules
 let authCallback;
 let authCallbacks = [];
 let currentUserEmail;
+let autoId;
 
 const pathOf = (segs) => segs.map(String).join('/');
 const lastSeg = (path) => path.split('/').pop();
@@ -60,6 +61,11 @@ vi.mock('https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js', () =
   getDocFromServer: vi.fn(async (ref) => docSnap(ref.path)),
   getDocsFromServer: vi.fn(async (ref) => { if (failGetDocs) throw failGetDocs; return colSnap(ref.path); }),
   setDoc: vi.fn(fakeSetDoc),
+  addDoc: vi.fn(async (ref, data) => {
+    const child = { kind: 'doc', path: `${ref.path}/auto-${++autoId}` };
+    await fakeSetDoc(child, data);
+    return child;
+  }),
   updateDoc: vi.fn(async (ref, fields) => {
     if (!store.has(ref.path)) throw new Error('not-found');
     const cur = store.get(ref.path);
@@ -130,7 +136,37 @@ beforeEach(() => {
   failGetDocs = null;
   authCallback = null;
   currentUserEmail = 'user@example.com';
+  autoId = 0;
   vi.clearAllMocks();
+});
+
+describe('sync.js recommendation feedback', () => {
+  it('stores recommendation interactions as separate event documents while signed in', async () => {
+    store.set(USER, {
+      sessions: [], categories: ['Work'], presets: [], tasksMigratedAt: 'SERVER_TS',
+      mlForecast: {
+        status: 'ready', runId: 'run-1', modelVersion: 'weekly-v3',
+        recommendation: { focusMinutes: 50, breakMinutes: 10, category: 'Work' },
+        plan: { focusMinutes: 300, sessions: 6, slots: [] },
+        weeks: [{ label: 'Oct 12', focusMinutes: 300, sessions: 6 }],
+        patterns: { bestHour: 9, bestDay: 1, bestDurationMinutes: 50, bestBreakMinutes: 10, weeklySessions: 6, completionRate: 0.8 }
+      }
+    });
+    await mountAppAndSync();
+    await signIn();
+
+    document.getElementById('recommendationToggleBtn').click();
+    await settle();
+
+    const events = [...store.entries()]
+      .filter(([path]) => isDirectChild(`${USER}/recommendationEvents`, path))
+      .map(([, value]) => value);
+    expect(events.map((event) => event.type)).toEqual(expect.arrayContaining(['shown', 'enabled', 'applied']));
+    events.forEach((event) => {
+      expect(event.runId).toBe('run-1');
+      expect(event.createdAt).toBe('SERVER_TS');
+    });
+  });
 });
 
 // vi.resetModules() gives every test a fresh sync.js, but the previous

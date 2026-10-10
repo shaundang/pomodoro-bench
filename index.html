@@ -7,7 +7,7 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8D%85%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;1,9..144,500&family=Work+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap">
-<link rel="stylesheet" href="css/style.css?v=10">
+<link rel="stylesheet" href="css/style.css?v=11">
 <link rel="stylesheet" href="css/garden-farm.css?v=11">
 </head>
 <body>
@@ -153,6 +153,41 @@
         <span class="tile-sub" id="allTimePomodoros">0 pomodoros</span>
       </div>
     </div>
+
+    <section class="card coach-card" aria-labelledby="coachTitle">
+      <div class="coach-card-heading">
+        <h2 id="coachTitle">Focus plan</h2>
+        <span class="coach-preview-badge">Preview</span>
+      </div>
+      <div class="coach-tabs" role="tablist" aria-label="Focus plan">
+        <button type="button" class="coach-tab" id="coachPlanTab" role="tab" aria-selected="true" aria-controls="coachPlanPanel">Plan</button>
+        <button type="button" class="coach-tab" id="coachForecastTab" role="tab" aria-selected="false" aria-controls="coachForecastPanel">Forecast</button>
+        <button type="button" class="coach-tab" id="coachPatternsTab" role="tab" aria-selected="false" aria-controls="coachPatternsPanel">Patterns</button>
+      </div>
+      <div class="coach-panel" id="coachPlanPanel" role="tabpanel" aria-labelledby="coachPlanTab">
+        <div class="coach-plan-summary">
+          <div>
+            <span>This week</span>
+            <strong><b id="coachFocusTarget">—</b> · <b id="coachSessionTarget">—</b></strong>
+          </div>
+        </div>
+        <div class="coach-slot-list" id="coachSlotList"></div>
+        <button type="button" class="btn btn-primary btn-sm coach-apply-btn" id="applyCoachPlanBtn" disabled>Apply to timer</button>
+      </div>
+      <div class="coach-panel" id="coachForecastPanel" role="tabpanel" aria-labelledby="coachForecastTab" hidden>
+        <div class="coach-forecast-list" id="coachForecastList"></div>
+      </div>
+      <div class="coach-panel" id="coachPatternsPanel" role="tabpanel" aria-labelledby="coachPatternsTab" hidden>
+        <div class="coach-pattern-grid">
+          <div><span>Best time</span><strong id="coachBestTime">—</strong></div>
+          <div><span>Best session</span><strong id="coachBestDuration">—</strong></div>
+          <div><span>Best day</span><strong id="coachBestDay">—</strong></div>
+          <div><span>Best break</span><strong id="coachBestBreak">—</strong></div>
+          <div><span>Weekly pace</span><strong id="coachWeeklyPace">—</strong></div>
+          <div><span>Completion</span><strong id="coachCompletion">—</strong></div>
+        </div>
+      </div>
+    </section>
 
     <div class="stats-grid">
       <div class="card log-card">
@@ -335,7 +370,7 @@
   </section>
 </div>
 
-<script src="js/app.js?v=31"></script>
-<script type="module" src="js/sync.js?v=10"></script>
+<script src="js/app.js?v=32"></script>
+<script type="module" src="js/sync.js?v=11"></script>
 </body>
 </html>
