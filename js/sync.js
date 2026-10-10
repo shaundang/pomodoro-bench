@@ -41,7 +41,7 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
 import {
   getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
-  doc, collection, getDocFromServer, getDocsFromServer, setDoc, updateDoc, deleteDoc, writeBatch,
+  doc, collection, getDocFromServer, getDocsFromServer, setDoc, addDoc, updateDoc, deleteDoc, writeBatch,
   onSnapshot, serverTimestamp, increment
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 import {
@@ -257,6 +257,15 @@ function onLocalChange(){
   if(!currentUid || applyingRemote) return;
   schedulePush();
 }
+function onRecommendation(event){
+  if(!currentUid || !event || !event.detail) return;
+  var detail = plain(event.detail);
+  var allowed = ['shown', 'enabled', 'disabled', 'applied', 'completed', 'skipped'];
+  if(allowed.indexOf(detail.type) < 0 || !detail.runId) return;
+  detail.createdAt = serverTimestamp();
+  addDoc(collection(db, 'syncs', currentUid, 'recommendationEvents'), detail)
+    .catch(reportError('Recommendation log error'));
+}
 function onVisibilityChange(){
   if(document.visibilityState === 'hidden' && currentUid) flushPush();
 }
@@ -268,11 +277,13 @@ function onPageHide(){
 // page carries no sync listeners at all.
 function attachPushTriggers(){
   window.addEventListener('pomodoroBench:changed', onLocalChange);
+  window.addEventListener('pomodoroBench:recommendation', onRecommendation);
   document.addEventListener('visibilitychange', onVisibilityChange);
   window.addEventListener('pagehide', onPageHide);
 }
 function detachPushTriggers(){
   window.removeEventListener('pomodoroBench:changed', onLocalChange);
+  window.removeEventListener('pomodoroBench:recommendation', onRecommendation);
   document.removeEventListener('visibilitychange', onVisibilityChange);
   window.removeEventListener('pagehide', onPageHide);
 }
@@ -294,6 +305,9 @@ function stopPolling(){
 function startSyncingFor(uid){
   stopSyncing();
   currentUid = uid;
+  // Listen before the initial Firestore read so the first rendered forecast
+  // can record its one-per-page `shown` event as well.
+  attachPushTriggers();
   PB().clearSkillMarks();
   setStatus('Connecting…');
 
@@ -317,6 +331,7 @@ function startSyncingFor(uid){
       try{ PB().applyIncomingBackup(withoutTasks(userDoc)); }
       catch(e){ /* remote doc had nothing new/valid — fine */ }
       applyingRemote = false;
+      try{ PB().applyMlForecast(userDoc.mlForecast || null); }catch(e){ /* use local preview */ }
     }
 
     // 2. Tasks: seed the collection once, or upload what changed here
@@ -360,11 +375,13 @@ function startSyncingFor(uid){
       pushLocalSnapshot();
       unsubscribeUserDoc = onSnapshot(userRef, function(docSnap){
         if(currentUid !== uid || !docSnap.exists()) return;
-        var remote = withoutTasks(docSnap.data());
+        var remoteDoc = docSnap.data();
+        var remote = withoutTasks(remoteDoc);
         applyingRemote = true;
         try{ PB().applyIncomingBackup(remote); }
         catch(e){ /* nothing new to merge */ }
         applyingRemote = false;
+        try{ PB().applyMlForecast(remoteDoc.mlForecast || null); }catch(e){ /* use local preview */ }
         // Sessions from another device may prove more pomodoros on a task.
         try{ PB().repairCompletedCounts({forward: true}); }catch(e){ /* cosmetic */ }
         // The baseline is what the remote actually holds — not our merged
@@ -376,7 +393,6 @@ function startSyncingFor(uid){
       }, reportError('Sync error'));
 
       startPolling();
-      attachPushTriggers();
       setStatus(signedInLabel() + '.');
     });
   }).catch(function(err){
@@ -393,6 +409,7 @@ function stopSyncing(){
   detachPushTriggers();
   if(pushTimeout){ clearTimeout(pushTimeout); pushTimeout = null; }
   if(PB()) PB().setTaskBackend(null);
+  if(PB()) PB().applyMlForecast(null);
   currentUid = null;
   lastPushedFingerprint = null;
   migrationNote = '';

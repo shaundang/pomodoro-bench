@@ -49,4 +49,42 @@ if (otherRead.status !== 403) throw new Error(`Expected cross-user read 403, got
 const anonymousRead = await fetch(securedPath);
 if (anonymousRead.status !== 403) throw new Error(`Expected anonymous read 403, got ${anonymousRead.status}`);
 
+const eventPath = `${securedPath}/recommendationEvents/event-1`;
+const eventBody = {
+  fields: {
+    type: { stringValue: 'applied' },
+    runId: { stringValue: 'run-1' },
+    focusMinutes: { integerValue: '50' }
+  }
+};
+const ownEventCreate = await fetch(eventPath, {
+  method: 'PATCH',
+  headers: { Authorization: `Bearer ${firstUser.idToken}`, 'Content-Type': 'application/json' },
+  body: JSON.stringify(eventBody)
+});
+if (!ownEventCreate.ok) throw new Error(`Authenticated event create failed: ${ownEventCreate.status} ${await ownEventCreate.text()}`);
+
+const ownEventRead = await fetch(eventPath, { headers: { Authorization: `Bearer ${firstUser.idToken}` } });
+if (!ownEventRead.ok) throw new Error(`Authenticated event read failed: ${ownEventRead.status} ${await ownEventRead.text()}`);
+
+const ownEventUpdate = await fetch(eventPath, {
+  method: 'PATCH',
+  headers: { Authorization: `Bearer ${firstUser.idToken}`, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ fields: { ...eventBody.fields, type: { stringValue: 'completed' } } })
+});
+if (ownEventUpdate.status !== 403) throw new Error(`Expected event update 403, got ${ownEventUpdate.status}`);
+
+const ownEventDelete = await fetch(eventPath, {
+  method: 'DELETE',
+  headers: { Authorization: `Bearer ${firstUser.idToken}` }
+});
+if (ownEventDelete.status !== 403) throw new Error(`Expected event delete 403, got ${ownEventDelete.status}`);
+
+const otherEventCreate = await fetch(`${securedPath}/recommendationEvents/event-2`, {
+  method: 'PATCH',
+  headers: { Authorization: `Bearer ${secondUser.idToken}`, 'Content-Type': 'application/json' },
+  body: JSON.stringify(eventBody)
+});
+if (otherEventCreate.status !== 403) throw new Error(`Expected cross-user event create 403, got ${otherEventCreate.status}`);
+
 console.log('Firestore and Auth emulator security tests passed');
