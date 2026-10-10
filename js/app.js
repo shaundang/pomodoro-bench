@@ -6417,7 +6417,7 @@
   var hourAnimToken = 0;
   var hourChartGeom = null;
 
-  function renderHourChart(sessions){
+  function renderHourChart(sessions, shouldAnimate){
     var canvas = els.hourChart;
     var focusBuckets = new Array(24).fill(0);
     var breakBuckets = new Array(24).fill(0);
@@ -6518,10 +6518,14 @@
       }
     }
 
-    animateProgress(450, function(p){
-      if(myToken !== hourAnimToken) return;
-      draw(p);
-    });
+    if(shouldAnimate){
+      animateProgress(450, function(p){
+        if(myToken !== hourAnimToken) return;
+        draw(p);
+      });
+    } else {
+      draw(1);
+    }
 
     function fmt(h){ return String(h).padStart(2, '0') + ':00'; }
     els.peakHourNote.textContent = 'Peak focus: ' + fmt(maxIdx) + '–' + fmt((maxIdx + 1) % 24);
@@ -6702,7 +6706,7 @@
     return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
   }
 
-  function renderDayTimeline(sessions){
+  function renderDayTimeline(sessions, shouldAnimate){
     var canvas = els.categoryTrendChart;
     var dayStart = new Date();
     dayStart.setHours(0, 0, 0, 0);
@@ -6860,10 +6864,14 @@
       return;
     }
 
-    animateProgress(450, function(p){
-      if(myToken !== trendAnimToken) return;
-      draw(p, null);
-    });
+    if(shouldAnimate){
+      animateProgress(450, function(p){
+        if(myToken !== trendAnimToken) return;
+        draw(p, null);
+      });
+    } else {
+      draw(1, null);
+    }
 
     var scope = selIdx >= 0 ? [rows[selIdx]] : rows;
     var count = 0, total = 0, first = Infinity, last = -Infinity;
@@ -6920,10 +6928,10 @@
   var trendChartGeom = null;
   var trendMoreOpen = false;
 
-  function renderCategoryTrend(sessions, allSessions){
+  function renderCategoryTrend(sessions, allSessions, shouldAnimate){
     var canvas = els.categoryTrendChart;
     if(!canvas) return;
-    if(categoryRange === 'day'){ renderDayTimeline(sessions); return; }
+    if(categoryRange === 'day'){ renderDayTimeline(sessions, shouldAnimate); return; }
     canvas.style.height = '';
     var axis = trendAxis(categoryRange, sessions, allSessions || sessions);
     var n = axis.keys.length;
@@ -7196,10 +7204,14 @@
     }
     trendChartGeom.draw = draw;
 
-    animateProgress(450, function(p){
-      if(myToken !== trendAnimToken) return;
-      draw(p, null, null);
-    });
+    if(shouldAnimate){
+      animateProgress(450, function(p){
+        if(myToken !== trendAnimToken) return;
+        draw(p, null, null);
+      });
+    } else {
+      draw(1, null, null);
+    }
 
     var peakIdx = 0;
     if(selIdx >= 0){
@@ -7448,17 +7460,43 @@
     return sessions;
   }
 
+  var lastInsightsDataKey = null;
+  var lastInsightsLayoutKey = null;
+
+  function insightsDataKey(sessions){
+    var values = sessions.map(function(s){
+      return [s.id, s.date, s.category, s.minutes, s.timestamp, s.type];
+    });
+    values.sort(function(a, b){ return String(a[0]).localeCompare(String(b[0])); });
+    return JSON.stringify([categoryRange, customRangeFrom, customRangeTo, trendSelected, trendMoreOpen, values]);
+  }
+
+  function insightsLayoutKey(){
+    return JSON.stringify([
+      window.devicePixelRatio || 1,
+      els.categoryPieChart.clientWidth || 150,
+      els.hourChart.clientWidth || 320,
+      els.categoryTrendChart.clientWidth || 600
+    ]);
+  }
+
   function renderInsights(sessions){
+    var dataKey = insightsDataKey(sessions);
+    var layoutKey = insightsLayoutKey();
+    if(dataKey === lastInsightsDataKey && layoutKey === lastInsightsLayoutKey) return;
+    var shouldAnimate = dataKey !== lastInsightsDataKey;
+    lastInsightsDataKey = dataKey;
+    lastInsightsLayoutKey = layoutKey;
     var filtered = sessionsInRange(sessions, categoryRange);
     var focusOnly = filtered.filter(function(s){ return s.type !== 'break'; });
-    renderCategoryPie(focusOnly);
-    renderHourChart(filtered);
-    renderCategoryTrend(focusOnly, sessions);
+    renderCategoryPie(focusOnly, shouldAnimate);
+    renderHourChart(filtered, shouldAnimate);
+    renderCategoryTrend(focusOnly, sessions, shouldAnimate);
   }
 
   var pieAnimToken = 0;
 
-  function renderCategoryPie(sessions){
+  function renderCategoryPie(sessions, shouldAnimate){
     var canvas = els.categoryPieChart;
     var listEl = els.categoryAllList;
 
@@ -7545,10 +7583,14 @@
       ctx.fillText('total', cx, cy + 13);
     }
 
-    animateProgress(450, function(p){
-      if(myToken !== pieAnimToken) return;
-      draw(p);
-    });
+    if(shouldAnimate){
+      animateProgress(450, function(p){
+        if(myToken !== pieAnimToken) return;
+        draw(p);
+      });
+    } else {
+      draw(1);
+    }
 
     rows.forEach(function(r){
       var pct = Math.round((r.minutes / total) * 100);
@@ -7913,7 +7955,15 @@
     renderScaleBreak();
   });
 
-  window.addEventListener('resize', function(){ refreshStats(); });
+  var insightsResizeQueued = false;
+  window.addEventListener('resize', function(){
+    if(insightsResizeQueued) return;
+    insightsResizeQueued = true;
+    requestAnimationFrame(function(){
+      insightsResizeQueued = false;
+      renderInsights(loadSessions());
+    });
+  });
 
   var STORAGE_VIEW = 'pomodoroBench.activeView.v1';
   var VIEWS = ['timer', 'stats', 'garden'];

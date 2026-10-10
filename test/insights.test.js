@@ -11,6 +11,39 @@ function focusSession(overrides) {
   return { id: Math.random().toString(36).slice(2), date: todayKey(), category: 'Work', task: 't', taskId: null, minutes: 30, timestamp: Date.now(), status: 'completed', type: 'focus', intention: null, quality: null, ...overrides };
 }
 
+describe('insights: redraw lifecycle', () => {
+  it('skips unchanged layouts and redraws resized charts without replaying animation', async () => {
+    const originalGetContext = HTMLCanvasElement.prototype.getContext;
+    const originalRequestAnimationFrame = window.requestAnimationFrame;
+    let contextRequests = 0;
+    let animationRequests = 0;
+    HTMLCanvasElement.prototype.getContext = function(){
+      if(['categoryPieChart', 'hourChart', 'categoryTrendChart'].includes(this.id)) contextRequests += 1;
+      return originalGetContext.call(this);
+    };
+    window.requestAnimationFrame = function(callback){
+      animationRequests += 1;
+      return originalRequestAnimationFrame(callback);
+    };
+    seed([focusSession({ minutes: 30 })]);
+    await mountApp();
+    const requestsAfterMount = contextRequests;
+
+    window.dispatchEvent(new window.Event('resize'));
+
+    expect(contextRequests).toBe(requestsAfterMount);
+    ['categoryPieChart', 'hourChart', 'categoryTrendChart'].forEach(function(id){
+      Object.defineProperty(document.getElementById(id), 'clientWidth', { configurable: true, value: 640 });
+    });
+    const animationsBeforeResize = animationRequests;
+
+    window.dispatchEvent(new window.Event('resize'));
+
+    expect(contextRequests).toBe(requestsAfterMount + 3);
+    expect(animationRequests).toBe(animationsBeforeResize + 1);
+  });
+});
+
 describe('view tabs', () => {
   it('switches between the Timer and Statistics views', async () => {
     const els = await mountApp();
